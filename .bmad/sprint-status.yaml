@@ -10,8 +10,8 @@ sprints:
     end_date: "2026-02-16"
     capacity_points: 20
     committed_points: 13
-    completed_points: 11
-    status: "in_progress"
+    completed_points: 13
+    status: "completed"
     goal: "Working project scaffold with validate-data CLI and green CI"
     stories:
       - story_id: "STORY-1.1"
@@ -35,8 +35,9 @@ sprints:
       - story_id: "STORY-1.4"
         title: "CI Skeleton & First Green Build"
         points: 2
-        status: "defined"
-        assigned_to: null
+        status: "completed"
+        assigned_to: "ai_dev_agent"
+        completion_date: "2026-02-10"
 
   - sprint_number: 2
     start_date: "2026-02-17"
@@ -199,7 +200,7 @@ sprints:
         assigned_to: null
 
 velocity:
-  sprint_1: null
+  sprint_1: 13
   sprint_2: null
   sprint_3: null
   sprint_4: null

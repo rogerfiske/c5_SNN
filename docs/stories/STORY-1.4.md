@@ -9,7 +9,7 @@
 | **Sprint** | 1 |
 | **Points** | 2 |
 | **Priority** | Must Have |
-| **Status** | Defined |
+| **Status** | Completed |
 | **Dependencies** | STORY-1.3 (completed) |
 
 ---
@@ -111,6 +111,11 @@ Then install the rest of the project normally. This keeps CI fast and avoids dow
 
 _This section is updated during implementation._
 
-- Implementation started: —
-- Implementation completed: —
-- Notes: —
+- Implementation started: 2026-02-10
+- Implementation completed: 2026-02-10
+- Commit: `72a30e4` on `main`
+- Notes:
+  - Single workflow file: `.github/workflows/ci.yml`
+  - CPU-only PyTorch via `--index-url https://download.pytorch.org/whl/cpu` keeps CI fast
+  - First CI run passed in ~49 seconds (26 tests, ruff clean)
+  - CI status check visible on GitHub Actions page
