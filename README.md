@@ -2,6 +2,20 @@
 
 Spiking Neural Network time-series forecasting pipeline for CA5 event prediction.
 
+## Project Status
+
+| Sprint | Goal | Points | Status |
+|--------|------|--------|--------|
+| Sprint 1 | Foundation & Data Validation | 13/13 | Complete |
+| Sprint 2 | Data Pipeline & Evaluation Harness | 0/16 | Next |
+| Sprint 3 | Baseline Models | 0/19 | — |
+| Sprint 4 | SNN Phase A (MLP/CNN) | 0/18 | — |
+| Sprint 5 | SNN Phase B (Spike-GRU) | 0/13 | — |
+| Sprint 6 | SNN Phase C (Spiking Transformer) | 0/18 | — |
+| Sprint 7 | Final Report & Closure | 0/6 | — |
+
+**Overall: 13/103 points completed**
+
 ## Setup
 
 ### 1. Create virtual environment
@@ -59,16 +73,8 @@ pip install -e .
 c5-snn --help
 
 # Validate the CA5 dataset
+c5-snn validate-data
 c5-snn validate-data --data-path data/raw/CA5_matrix_binary.csv
-
-# Train a model from config
-c5-snn train --config configs/baseline_gru.yaml
-
-# Evaluate a checkpoint
-c5-snn evaluate --checkpoint results/baseline_gru/best_model.pt
-
-# Predict top-20 for a date
-c5-snn predict --asof 2024-01-15
 ```
 
 ## Project Structure
@@ -84,8 +90,18 @@ configs/           # YAML experiment configs
 data/raw/          # Source CSV (gitignored)
 data/processed/    # Generated tensors (gitignored)
 results/           # Experiment outputs (gitignored)
-tests/             # pytest test suite
+tests/             # pytest test suite (26 tests)
+docs/              # Architecture, sprint plan, stories, sessions
+.github/workflows/ # CI pipeline (lint + tests on push/PR)
 ```
+
+## CI
+
+GitHub Actions runs automatically on every push and PR to `main`:
+
+- Ruff lint check
+- Full pytest suite (26 tests)
+- CPU-only PyTorch (fast, no GPU required)
 
 ## Development
 
