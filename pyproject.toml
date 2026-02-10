@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "c5-snn"
+version = "0.1.0"
+description = "Spiking Neural Network time-series forecasting pipeline for CA5 event prediction"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+
+dependencies = [
+    "torch==2.5.1",
+    "snntorch==0.9.1",
+    "pandas==2.2.3",
+    "numpy==1.26.4",
+    "pyyaml==6.0.2",
+    "click==8.1.8",
+    "tqdm==4.67.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.4",
+    "ruff==0.8.6",
+    "pyright==1.1.391",
+]
+
+[project.scripts]
+c5-snn = "c5_snn.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

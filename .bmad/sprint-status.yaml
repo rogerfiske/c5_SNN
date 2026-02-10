@@ -1,0 +1,212 @@
+version: "6.0.0"
+project_name: "c5_SNN"
+project_level: 2
+current_sprint: 1
+sprint_plan_path: "docs/sprint-plan-c5-snn-2026-02-10.md"
+
+sprints:
+  - sprint_number: 1
+    start_date: "2026-02-10"
+    end_date: "2026-02-16"
+    capacity_points: 20
+    committed_points: 13
+    completed_points: 0
+    status: "not_started"
+    goal: "Working project scaffold with validate-data CLI and green CI"
+    stories:
+      - story_id: "STORY-1.1"
+        title: "Repository & Package Scaffold"
+        points: 3
+        status: "defined"
+        assigned_to: null
+      - story_id: "STORY-1.2"
+        title: "Logging, Seed Management & Config"
+        points: 3
+        status: "not_started"
+        assigned_to: null
+      - story_id: "STORY-1.3"
+        title: "Data Validation CLI Command"
+        points: 5
+        status: "not_started"
+        assigned_to: null
+      - story_id: "STORY-1.4"
+        title: "CI Skeleton & First Green Build"
+        points: 2
+        status: "not_started"
+        assigned_to: null
+
+  - sprint_number: 2
+    start_date: "2026-02-17"
+    end_date: "2026-02-23"
+    capacity_points: 20
+    committed_points: 16
+    completed_points: 0
+    status: "not_started"
+    goal: "Complete data pipeline and evaluation harness"
+    stories:
+      - story_id: "STORY-2.1"
+        title: "Windowed Tensor Construction"
+        points: 5
+        status: "not_started"
+        assigned_to: null
+      - story_id: "STORY-2.2"
+        title: "Time-Based Splits"
+        points: 3
+        status: "not_started"
+        assigned_to: null
+      - story_id: "STORY-2.3"
+        title: "Evaluation Harness & Metrics"
+        points: 5
+        status: "not_started"
+        assigned_to: null
+      - story_id: "STORY-2.4"
+        title: "CLI evaluate Command"
+        points: 3
+        status: "not_started"
+        assigned_to: null
+
+  - sprint_number: 3
+    start_date: "2026-02-24"
+    end_date: "2026-03-02"
+    capacity_points: 20
+    committed_points: 19
+    completed_points: 0
+    status: "not_started"
+    goal: "Baselines trained with first real benchmark numbers"
+    stories:
+      - story_id: "STORY-3.1"
+        title: "Frequency/Recency Heuristic"
+        points: 3
+        status: "not_started"
+        assigned_to: null
+      - story_id: "STORY-3.2"
+        title: "ANN GRU Baseline"
+        points: 5
+        status: "not_started"
+        assigned_to: null
+      - story_id: "STORY-3.3"
+        title: "Training Loop & train CLI"
+        points: 8
+        status: "not_started"
+        assigned_to: null
+      - story_id: "STORY-3.4"
+        title: "Baseline Results & Comparison"
+        points: 3
+        status: "not_started"
+        assigned_to: null
+
+  - sprint_number: 4
+    start_date: "2026-03-03"
+    end_date: "2026-03-09"
+    capacity_points: 20
+    committed_points: 18
+    completed_points: 0
+    status: "not_started"
+    goal: "First SNN models, Phase A vs baseline comparison"
+    stories:
+      - story_id: "STORY-4.1"
+        title: "snnTorch Integration & Spike Encoding"
+        points: 5
+        status: "not_started"
+        assigned_to: null
+      - story_id: "STORY-4.2"
+        title: "Spiking MLP Model"
+        points: 5
+        status: "not_started"
+        assigned_to: null
+      - story_id: "STORY-4.3"
+        title: "Spiking 1D-CNN Model"
+        points: 5
+        status: "not_started"
+        assigned_to: null
+      - story_id: "STORY-4.4"
+        title: "Phase A Training & Comparison"
+        points: 3
+        status: "not_started"
+        assigned_to: null
+
+  - sprint_number: 5
+    start_date: "2026-03-10"
+    end_date: "2026-03-16"
+    capacity_points: 20
+    committed_points: 13
+    completed_points: 0
+    status: "not_started"
+    goal: "Spike-GRU with HP sweep, cumulative leaderboard"
+    stories:
+      - story_id: "STORY-5.1"
+        title: "Spike-GRU Architecture"
+        points: 5
+        status: "not_started"
+        assigned_to: null
+      - story_id: "STORY-5.2"
+        title: "HP Sweep"
+        points: 5
+        status: "not_started"
+        assigned_to: null
+      - story_id: "STORY-5.3"
+        title: "Phase B Evaluation & Comparison"
+        points: 3
+        status: "not_started"
+        assigned_to: null
+
+  - sprint_number: 6
+    start_date: "2026-03-17"
+    end_date: "2026-03-23"
+    capacity_points: 20
+    committed_points: 18
+    completed_points: 0
+    status: "not_started"
+    goal: "Spiking Transformer with window tuning and HP sweep"
+    stories:
+      - story_id: "STORY-6.1"
+        title: "Spiking Transformer Architecture"
+        points: 8
+        status: "not_started"
+        assigned_to: null
+      - story_id: "STORY-6.2"
+        title: "Window Size Tuning"
+        points: 5
+        status: "not_started"
+        assigned_to: null
+      - story_id: "STORY-6.3"
+        title: "HP Sweep & Best Model"
+        points: 5
+        status: "not_started"
+        assigned_to: null
+
+  - sprint_number: 7
+    start_date: "2026-03-24"
+    end_date: "2026-03-30"
+    capacity_points: 20
+    committed_points: 6
+    completed_points: 0
+    status: "not_started"
+    goal: "Final report and project closure"
+    stories:
+      - story_id: "STORY-6.4"
+        title: "Final Comprehensive Comparison"
+        points: 3
+        status: "not_started"
+        assigned_to: null
+      - story_id: "STORY-6.5"
+        title: "Reproducible Runbook & Closure"
+        points: 3
+        status: "not_started"
+        assigned_to: null
+
+velocity:
+  sprint_1: null
+  sprint_2: null
+  sprint_3: null
+  sprint_4: null
+  sprint_5: null
+  sprint_6: null
+  sprint_7: null
+  rolling_average: null
+
+team:
+  size: 1
+  type: "ai_dev_agent"
+  sprint_length_weeks: 1
+  capacity_per_sprint: 20

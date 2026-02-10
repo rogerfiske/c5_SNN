@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Type checking
+.mypy_cache/
+.pyright/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data artifacts (large files, not tracked)
+data/raw/
+data/processed/
+
+# Experiment outputs (large checkpoints, not tracked)
+results/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Bootstrap docs (ChatGPT drafts, not part of final project)
+c5_SNN_bootstrap_docs/
+
+# AI tool configs (project-specific, keep .bmad and .claude)
+.gemini/
+.windsurf/
+web-bundles/

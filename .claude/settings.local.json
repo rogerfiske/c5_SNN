@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(copy \"c:\\\\Users\\\\Minis\\\\CascadeProjects\\\\c5_SNN\\\\c5_SNN_bootstrap_docs\\\\docs\\\\PRD.md\" \"c:\\\\Users\\\\Minis\\\\CascadeProjects\\\\c5_SNN\\\\docs\\\\prd.md\")",
+      "Bash(if not exist \"c:\\\\Users\\\\Minis\\\\CascadeProjects\\\\c5_SNN\\\\.bmad\" mkdir \"c:\\\\Users\\\\Minis\\\\CascadeProjects\\\\c5_SNN\\\\.bmad\")",
+      "Bash(git init:*)",
+      "Bash(pip install:*)",
+      "Bash(c5-snn:*)",
+      "Bash(ruff check:*)",
+      "Bash(pytest:*)",
+      "Bash(ruff format:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}
