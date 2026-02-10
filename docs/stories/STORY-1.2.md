@@ -9,7 +9,7 @@
 | **Sprint** | 1 |
 | **Points** | 3 |
 | **Priority** | Must Have |
-| **Status** | Defined |
+| **Status** | Completed |
 | **Dependencies** | STORY-1.1 (completed) |
 
 ---
@@ -165,6 +165,12 @@ so that every subsequent story has reproducibility and observability built in fr
 
 _This section is updated during implementation._
 
-- Implementation started: —
-- Implementation completed: —
-- Notes: —
+- Implementation started: 2026-02-10
+- Implementation completed: 2026-02-10
+- Commit: `7b5a223` on `main`
+- Notes:
+  - 5 source files created in `src/c5_snn/utils/`
+  - `configs/default.yaml` created with full experiment config schema
+  - 14 unit tests across 3 test files, all green
+  - Ruff check + format clean
+  - All AC-7 import paths verified
