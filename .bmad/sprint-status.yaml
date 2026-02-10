@@ -35,7 +35,7 @@ sprints:
       - story_id: "STORY-1.4"
         title: "CI Skeleton & First Green Build"
         points: 2
-        status: "not_started"
+        status: "defined"
         assigned_to: null
 
   - sprint_number: 2
