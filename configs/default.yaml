@@ -1,0 +1,24 @@
+experiment:
+  name: "default"
+  seed: 42
+
+data:
+  raw_path: "data/raw/CA5_matrix_binary.csv"
+  window_size: 21
+  split_ratios: [0.70, 0.15, 0.15]
+  batch_size: 64
+
+model:
+  type: "frequency_baseline"
+
+training:
+  epochs: 100
+  learning_rate: 0.001
+  optimizer: "adam"
+  early_stopping_patience: 10
+  early_stopping_metric: "val_recall_at_20"
+
+output:
+  dir: "results/default"
+
+log_level: "INFO"

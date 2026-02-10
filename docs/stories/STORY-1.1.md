@@ -9,7 +9,7 @@
 | **Sprint** | 1 |
 | **Points** | 3 |
 | **Priority** | Must Have |
-| **Status** | Defined |
+| **Status** | Completed |
 | **Dependencies** | None (first story) |
 
 ---
@@ -128,6 +128,15 @@ This story is scaffold only. Do NOT implement:
 
 _This section is updated during implementation._
 
-- Implementation started: —
-- Implementation completed: —
-- Notes: —
+- Implementation started: 2026-02-10
+- Implementation completed: 2026-02-10
+- Commit: `9dc920d` on `main`
+- Notes:
+  - PyTorch installed as CPU-only wheel on Windows (default PyPI). ROCm wheels are Linux-only.
+  - `pip install -e ".[dev]"` succeeded; `c5-snn --help` works
+  - `ruff check src/ tests/` — All checks passed
+  - `ruff format --check src/ tests/` — 7 files already formatted
+  - `pytest tests/ -v` — 0 tests collected (expected at scaffold stage)
+  - ROCm smoke test: `torch.cuda.is_available() = False` (CPU wheel; acceptable per AC-7)
+  - Build backend fixed from `setuptools.backends._legacy:_Backend` to `setuptools.build_meta` for compatibility with setuptools <70
+  - Some pre-existing dependency conflicts (pycaret, sktime, torchaudio) from global Python install — not relevant to this project
