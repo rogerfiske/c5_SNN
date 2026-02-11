@@ -60,7 +60,8 @@
 - **CLI commands:** validate-data, train, evaluate, compare, phase-a, phase-b-sweep, phase-b
 - **SNN models (Phase A):** SpikingMLP (FC+LIF), SpikingCNN1D (Conv1d+LIF) — both use SpikeEncoder, surrogate gradients
 - **SNN models (Phase B):** SpikeGRU (RLeaky recurrent LIF) — processes window event-by-event with accumulating membrane state
-- **snnTorch patterns:** `snntorch.Leaky` with `init_hidden=False` (Phase A); `snntorch.RLeaky` with `all_to_all=True` (Phase B); manual membrane potential management, `surrogate.fast_sigmoid(slope=25)`
+- **SNN models (Phase C):** SpikingTransformer (SSA + spiking FFN with LIF) — Spikformer-style spike-form Q/K/V attention without softmax, learnable positional encoding, 286,887 params (default config)
+- **snnTorch patterns:** `snntorch.Leaky` with `init_hidden=False` (Phase A/C); `snntorch.RLeaky` with `all_to_all=True` (Phase B); manual membrane potential management, `surrogate.fast_sigmoid(slope=25)`
 - **SNN encoding:** `direct` mode passes binary input as-is (T=1); `rate_coded` samples Bernoulli spikes (T=timesteps)
 
 ## Compute Policy
@@ -148,12 +149,12 @@
 
 ## Test Coverage
 
-- **Total tests:** 413 (all passing)
+- **Total tests:** 464 (all passing)
 - **Test files:** test_validation, test_loader, test_logging_setup, test_seed, test_config, test_windowing, test_splits, test_baselines, test_metrics, test_evaluate_cli, test_train, test_compare, test_snn_models
 
 ## Next Actions
 
-- Sprint 6: Spiking Transformer architecture (STORY-6.1), window size tuning (STORY-6.2), HP sweep (STORY-6.3).
+- Sprint 6 in progress: STORY-6.1 complete, next is window size tuning (STORY-6.2) then HP sweep (STORY-6.3).
 - Window size tuning (W=7-90) is likely a stronger lever than architecture changes.
-- Spiking Transformer with attention may capture patterns that recurrence/feedforward cannot.
+- SpikingTransformer smoke test showed val_recall_at_20=0.5067 after 2 epochs — in expected range.
 - Consider that all learned models cluster ~0.51 Recall@20 — dataset temporal structure may be inherently simple.

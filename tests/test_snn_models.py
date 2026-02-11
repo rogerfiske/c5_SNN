@@ -1,10 +1,13 @@
-"""Tests for SNN models (STORY-4.2, STORY-4.3, STORY-5.1)."""
+"""Tests for SNN models (STORY-4.2, STORY-4.3, STORY-5.1, STORY-6.1)."""
 
+import pytest
 import torch
 
 from c5_snn.models.base import MODEL_REGISTRY, get_model
 from c5_snn.models.snn_models import SpikingCNN1D, SpikingMLP
 from c5_snn.models.snn_phase_b import SpikeGRU
+from c5_snn.models.snn_phase_c import SpikingTransformer
+from c5_snn.utils.exceptions import ConfigError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1202,3 +1205,489 @@ class TestSpikeGRUConfigFile:
         x = _binary_input(batch=4, window=21)
         out = model(x)
         assert out.shape == (4, 39)
+
+
+# ===========================================================================
+# SpikingTransformer tests (STORY-6.1)
+# ===========================================================================
+
+
+def _make_transformer_config(
+    d_model=128,
+    n_heads=4,
+    n_layers=2,
+    d_ffn=256,
+    beta=0.95,
+    dropout=0.1,
+    max_window_size=100,
+    encoding="direct",
+    timesteps=10,
+    window_size=21,
+) -> dict:
+    """Create a minimal config dict for SpikingTransformer."""
+    return {
+        "model": {
+            "type": "spiking_transformer",
+            "encoding": encoding,
+            "timesteps": timesteps,
+            "d_model": d_model,
+            "n_heads": n_heads,
+            "n_layers": n_layers,
+            "d_ffn": d_ffn,
+            "beta": beta,
+            "dropout": dropout,
+            "max_window_size": max_window_size,
+        },
+        "data": {
+            "window_size": window_size,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# SpikingTransformer — Construction
+# ---------------------------------------------------------------------------
+
+
+class TestSpikingTransformerConstruction:
+    """Verify SpikingTransformer construction and config parsing."""
+
+    def test_default_d_model(self):
+        """Default d_model is 128."""
+        model = SpikingTransformer(_make_transformer_config())
+        assert model.d_model == 128
+
+    def test_custom_d_model(self):
+        """Custom d_model from config."""
+        model = SpikingTransformer(_make_transformer_config(d_model=64))
+        assert model.d_model == 64
+
+    def test_default_n_heads(self):
+        """Default n_heads is 4."""
+        model = SpikingTransformer(_make_transformer_config())
+        assert model.n_heads == 4
+
+    def test_default_n_layers(self):
+        """Default n_layers is 2."""
+        model = SpikingTransformer(_make_transformer_config())
+        assert model.n_layers == 2
+
+    def test_custom_n_layers(self):
+        """Custom n_layers from config."""
+        model = SpikingTransformer(_make_transformer_config(n_layers=3))
+        assert model.n_layers == 3
+        assert len(model.blocks) == 3
+
+    def test_default_d_ffn(self):
+        """Default d_ffn is 256."""
+        model = SpikingTransformer(_make_transformer_config())
+        assert model.d_ffn == 256
+
+    def test_default_beta(self):
+        """Default beta is 0.95."""
+        model = SpikingTransformer(_make_transformer_config())
+        assert model.beta == 0.95
+
+    def test_default_max_window_size(self):
+        """Default max_window_size is 100."""
+        model = SpikingTransformer(_make_transformer_config())
+        assert model.max_window_size == 100
+
+    def test_is_base_model(self):
+        """SpikingTransformer subclasses BaseModel."""
+        from c5_snn.models.base import BaseModel
+
+        model = SpikingTransformer(_make_transformer_config())
+        assert isinstance(model, BaseModel)
+
+    def test_is_nn_module(self):
+        """SpikingTransformer is an nn.Module."""
+        model = SpikingTransformer(_make_transformer_config())
+        assert isinstance(model, torch.nn.Module)
+
+    def test_block_count(self):
+        """Number of transformer blocks matches n_layers."""
+        model = SpikingTransformer(_make_transformer_config(n_layers=3))
+        assert len(model.blocks) == 3
+
+    def test_input_projection(self):
+        """Input projection maps 39 features to d_model."""
+        model = SpikingTransformer(_make_transformer_config(d_model=64))
+        assert model.input_proj.in_features == 39
+        assert model.input_proj.out_features == 64
+
+    def test_readout_layer(self):
+        """Readout layer projects from d_model to 39."""
+        model = SpikingTransformer(_make_transformer_config(d_model=64))
+        assert model.readout.in_features == 64
+        assert model.readout.out_features == 39
+
+    def test_pos_embed_shape(self):
+        """Positional embedding has shape (1, max_window_size, d_model)."""
+        model = SpikingTransformer(
+            _make_transformer_config(d_model=64, max_window_size=100)
+        )
+        assert model.pos_embed.shape == (1, 100, 64)
+
+    def test_encoding_mode_stored(self):
+        """Encoder encoding mode matches config."""
+        model = SpikingTransformer(
+            _make_transformer_config(encoding="rate_coded")
+        )
+        assert model.encoder.encoding == "rate_coded"
+
+    def test_d_model_not_divisible_by_n_heads_raises(self):
+        """ConfigError raised when d_model not divisible by n_heads."""
+        with pytest.raises(ConfigError, match="divisible"):
+            SpikingTransformer(
+                _make_transformer_config(d_model=100, n_heads=3)
+            )
+
+
+# ---------------------------------------------------------------------------
+# SpikingTransformer — Forward pass
+# ---------------------------------------------------------------------------
+
+
+class TestSpikingTransformerForward:
+    """Verify SpikingTransformer forward pass shapes."""
+
+    def test_forward_shape_default(self):
+        """Forward: (4, 21, 39) -> (4, 39)."""
+        model = SpikingTransformer(_make_transformer_config())
+        x = _binary_input(batch=4, window=21)
+        out = model(x)
+        assert out.shape == (4, 39)
+
+    def test_forward_shape_batch_1(self):
+        """Forward: (1, 21, 39) -> (1, 39)."""
+        model = SpikingTransformer(_make_transformer_config())
+        x = _binary_input(batch=1, window=21)
+        out = model(x)
+        assert out.shape == (1, 39)
+
+    def test_forward_shape_large_batch(self):
+        """Forward: (64, 21, 39) -> (64, 39)."""
+        model = SpikingTransformer(_make_transformer_config())
+        x = _binary_input(batch=64, window=21)
+        out = model(x)
+        assert out.shape == (64, 39)
+
+    def test_forward_shape_window_7(self):
+        """Forward with W=7: (4, 7, 39) -> (4, 39)."""
+        model = SpikingTransformer(_make_transformer_config())
+        x = _binary_input(batch=4, window=7)
+        out = model(x)
+        assert out.shape == (4, 39)
+
+    def test_forward_shape_window_60(self):
+        """Forward with W=60: (4, 60, 39) -> (4, 39)."""
+        model = SpikingTransformer(_make_transformer_config())
+        x = _binary_input(batch=4, window=60)
+        out = model(x)
+        assert out.shape == (4, 39)
+
+    def test_forward_shape_window_90(self):
+        """Forward with W=90: (4, 90, 39) -> (4, 39)."""
+        model = SpikingTransformer(_make_transformer_config())
+        x = _binary_input(batch=4, window=90)
+        out = model(x)
+        assert out.shape == (4, 39)
+
+    def test_forward_shape_rate_coded(self):
+        """Forward with rate_coded encoding: (4, 21, 39) -> (4, 39)."""
+        model = SpikingTransformer(
+            _make_transformer_config(encoding="rate_coded", timesteps=5)
+        )
+        x = _binary_input(batch=4, window=21)
+        out = model(x)
+        assert out.shape == (4, 39)
+
+    def test_forward_shape_single_layer(self):
+        """Forward with single transformer layer: (4, 21, 39) -> (4, 39)."""
+        model = SpikingTransformer(_make_transformer_config(n_layers=1))
+        x = _binary_input(batch=4, window=21)
+        out = model(x)
+        assert out.shape == (4, 39)
+
+    def test_forward_shape_small_d_model(self):
+        """Forward with d_model=32: (4, 21, 39) -> (4, 39)."""
+        model = SpikingTransformer(
+            _make_transformer_config(d_model=32, n_heads=4, d_ffn=64)
+        )
+        x = _binary_input(batch=4, window=21)
+        out = model(x)
+        assert out.shape == (4, 39)
+
+    def test_forward_output_dtype(self):
+        """Output dtype is float32."""
+        model = SpikingTransformer(_make_transformer_config())
+        x = _binary_input()
+        out = model(x)
+        assert out.dtype == torch.float32
+
+    def test_forward_all_zeros(self):
+        """All-zeros input produces valid output."""
+        model = SpikingTransformer(_make_transformer_config())
+        x = torch.zeros(4, 21, 39)
+        out = model(x)
+        assert out.shape == (4, 39)
+        assert torch.isfinite(out).all()
+
+    def test_forward_all_ones(self):
+        """All-ones input produces valid output."""
+        model = SpikingTransformer(_make_transformer_config())
+        x = torch.ones(4, 21, 39)
+        out = model(x)
+        assert out.shape == (4, 39)
+        assert torch.isfinite(out).all()
+
+
+# ---------------------------------------------------------------------------
+# SpikingTransformer — Backward pass
+# ---------------------------------------------------------------------------
+
+
+class TestSpikingTransformerBackward:
+    """Verify backward pass through surrogate gradients."""
+
+    def test_backward_completes(self):
+        """Backward pass completes without error (surrogate gradients)."""
+        model = SpikingTransformer(_make_transformer_config())
+        x = _binary_input()
+        out = model(x)
+        loss = out.sum()
+        loss.backward()
+
+    def test_backward_with_bce_loss(self):
+        """Backward with BCEWithLogitsLoss (actual training loss)."""
+        model = SpikingTransformer(_make_transformer_config())
+        x = _binary_input()
+        target = (torch.rand(4, 39) > 0.5).float()
+        out = model(x)
+        loss = torch.nn.functional.binary_cross_entropy_with_logits(
+            out, target
+        )
+        loss.backward()
+
+    def test_gradients_exist(self):
+        """Input projection and readout have gradients after backward."""
+        model = SpikingTransformer(_make_transformer_config())
+        x = _binary_input()
+        out = model(x)
+        loss = out.sum()
+        loss.backward()
+        assert model.input_proj.weight.grad is not None
+        assert model.input_proj.weight.grad.abs().sum() > 0
+        assert model.readout.weight.grad is not None
+
+    def test_pos_embed_has_grad(self):
+        """Positional embedding gets gradients."""
+        model = SpikingTransformer(_make_transformer_config())
+        x = _binary_input()
+        out = model(x)
+        loss = out.sum()
+        loss.backward()
+        assert model.pos_embed.grad is not None
+
+    def test_backward_rate_coded(self):
+        """Backward completes with rate_coded encoding."""
+        model = SpikingTransformer(
+            _make_transformer_config(encoding="rate_coded", timesteps=3)
+        )
+        x = _binary_input()
+        out = model(x)
+        loss = out.sum()
+        loss.backward()
+
+
+# ---------------------------------------------------------------------------
+# SpikingTransformer — Learnable parameters
+# ---------------------------------------------------------------------------
+
+
+class TestSpikingTransformerParameters:
+    """Verify SpikingTransformer has learnable parameters."""
+
+    def test_has_parameters(self):
+        """Model has learnable parameters."""
+        model = SpikingTransformer(_make_transformer_config())
+        params = list(model.parameters())
+        assert len(params) > 0
+
+    def test_parameters_require_grad(self):
+        """All parameters require gradient."""
+        model = SpikingTransformer(_make_transformer_config())
+        for param in model.parameters():
+            assert param.requires_grad
+
+    def test_parameter_count_reasonable(self):
+        """Parameter count is reasonable for the architecture."""
+        model = SpikingTransformer(
+            _make_transformer_config(d_model=64, n_heads=4, d_ffn=128)
+        )
+        total_params = sum(p.numel() for p in model.parameters())
+        # input_proj: 39*64 + 64 = 2560
+        # pos_embed: 100*64 = 6400
+        # 2 blocks each with SSA (Q/K/V/O proj) + FFN
+        # readout: 64*39 + 39 = 2535
+        assert total_params > 10000
+
+
+# ---------------------------------------------------------------------------
+# SpikingTransformer — Membrane potential reset
+# ---------------------------------------------------------------------------
+
+
+class TestSpikingTransformerMembraneReset:
+    """Verify membrane potentials are reset each forward call."""
+
+    def test_consecutive_forwards_independent(self):
+        """Two consecutive forward passes produce the same output."""
+        model = SpikingTransformer(_make_transformer_config())
+        model.eval()
+        x = _binary_input()
+
+        with torch.no_grad():
+            out1 = model(x)
+            out2 = model(x)
+
+        torch.testing.assert_close(out1, out2)
+
+    def test_different_inputs_different_outputs(self):
+        """Different inputs produce different outputs with rate_coded."""
+        model = SpikingTransformer(
+            _make_transformer_config(encoding="rate_coded", timesteps=10)
+        )
+        model.eval()
+        x1 = torch.zeros(4, 21, 39)
+        x2 = _binary_input(batch=4, window=21)
+
+        with torch.no_grad():
+            out1 = model(x1)
+            out2 = model(x2)
+
+        assert not torch.equal(out1, out2)
+
+
+# ---------------------------------------------------------------------------
+# SpikingTransformer — Model registry
+# ---------------------------------------------------------------------------
+
+
+class TestSpikingTransformerRegistry:
+    """Verify SpikingTransformer is registered in MODEL_REGISTRY."""
+
+    def test_registered(self):
+        """'spiking_transformer' is in MODEL_REGISTRY."""
+        assert "spiking_transformer" in MODEL_REGISTRY
+
+    def test_registry_class(self):
+        """Registry entry is SpikingTransformer class."""
+        assert MODEL_REGISTRY["spiking_transformer"] is SpikingTransformer
+
+    def test_get_model_creates_instance(self):
+        """get_model with spiking_transformer config creates instance."""
+        config = _make_transformer_config()
+        model = get_model(config)
+        assert isinstance(model, SpikingTransformer)
+
+    def test_get_model_custom_config(self):
+        """get_model passes config to SpikingTransformer."""
+        config = _make_transformer_config(d_model=64, n_heads=4)
+        model = get_model(config)
+        assert model.d_model == 64
+
+    def test_exported_from_models(self):
+        """SpikingTransformer is accessible from c5_snn.models."""
+        from c5_snn.models import SpikingTransformer as Txf
+
+        assert Txf is SpikingTransformer
+
+
+# ---------------------------------------------------------------------------
+# SpikingTransformer — Config file loading
+# ---------------------------------------------------------------------------
+
+
+class TestSpikingTransformerConfigFile:
+    """Verify config file can create SpikingTransformer."""
+
+    def test_load_snn_phase_c_config(self):
+        """Load configs/snn_phase_c.yaml and create model."""
+        import yaml
+
+        with open("configs/snn_phase_c.yaml") as f:
+            config = yaml.safe_load(f)
+
+        model = get_model(config)
+        assert isinstance(model, SpikingTransformer)
+        assert model.d_model == 128
+        assert model.n_heads == 4
+        assert model.n_layers == 2
+        assert model.d_ffn == 256
+
+    def test_config_forward_shape(self):
+        """Model from config produces correct output shape."""
+        import yaml
+
+        with open("configs/snn_phase_c.yaml") as f:
+            config = yaml.safe_load(f)
+
+        model = get_model(config)
+        x = _binary_input(batch=4, window=21)
+        out = model(x)
+        assert out.shape == (4, 39)
+
+
+# ---------------------------------------------------------------------------
+# SpikingTransformer — Variable window size
+# ---------------------------------------------------------------------------
+
+
+class TestSpikingTransformerVariableWindow:
+    """Verify SpikingTransformer works with variable window sizes W=7-90."""
+
+    def test_window_7(self):
+        """W=7 produces correct output shape."""
+        model = SpikingTransformer(_make_transformer_config())
+        x = _binary_input(batch=4, window=7)
+        assert model(x).shape == (4, 39)
+
+    def test_window_14(self):
+        """W=14 produces correct output shape."""
+        model = SpikingTransformer(_make_transformer_config())
+        x = _binary_input(batch=4, window=14)
+        assert model(x).shape == (4, 39)
+
+    def test_window_30(self):
+        """W=30 produces correct output shape."""
+        model = SpikingTransformer(_make_transformer_config())
+        x = _binary_input(batch=4, window=30)
+        assert model(x).shape == (4, 39)
+
+    def test_window_60(self):
+        """W=60 produces correct output shape."""
+        model = SpikingTransformer(_make_transformer_config())
+        x = _binary_input(batch=4, window=60)
+        assert model(x).shape == (4, 39)
+
+    def test_window_90(self):
+        """W=90 produces correct output shape."""
+        model = SpikingTransformer(_make_transformer_config())
+        x = _binary_input(batch=4, window=90)
+        assert model(x).shape == (4, 39)
+
+    def test_same_model_different_windows(self):
+        """Same model handles different W in sequence (no reinstantiation)."""
+        model = SpikingTransformer(_make_transformer_config())
+        model.eval()
+
+        with torch.no_grad():
+            out7 = model(_binary_input(batch=2, window=7))
+            out21 = model(_binary_input(batch=2, window=21))
+            out60 = model(_binary_input(batch=2, window=60))
+
+        assert out7.shape == (2, 39)
+        assert out21.shape == (2, 39)
+        assert out60.shape == (2, 39)
