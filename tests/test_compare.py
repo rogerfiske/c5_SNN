@@ -1182,3 +1182,86 @@ class TestWindowTuneCLI:
              "--seeds", "abc,def"],
         )
         assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# CLI tests: phase-c-sweep (STORY-6.3)
+# ---------------------------------------------------------------------------
+
+
+class TestPhaseCSweepCLI:
+    """Tests for the phase-c-sweep CLI command."""
+
+    def test_phase_c_sweep_command_exists(self):
+        """phase-c-sweep command is registered and shows help."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["phase-c-sweep", "--help"])
+        assert result.exit_code == 0
+        assert "Spiking Transformer HP sweep" in result.output
+
+    def test_phase_c_sweep_config_option(self):
+        """phase-c-sweep --help shows --config option."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["phase-c-sweep", "--help"])
+        assert "--config" in result.output
+
+    def test_phase_c_sweep_output_option(self):
+        """phase-c-sweep --help shows --output option with default."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["phase-c-sweep", "--help"])
+        assert "--output" in result.output
+        assert "phase_c_sweep.csv" in result.output
+
+    def test_phase_c_sweep_top_k_option(self):
+        """phase-c-sweep --help shows --top-k option with default 5."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["phase-c-sweep", "--help"])
+        assert "--top-k" in result.output
+
+    def test_phase_c_sweep_seeds_option(self):
+        """phase-c-sweep --help shows --seeds option with default."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["phase-c-sweep", "--help"])
+        assert "--seeds" in result.output
+        assert "42,123,7" in result.output
+
+    def test_phase_c_sweep_screening_seed_option(self):
+        """phase-c-sweep --help shows --screening-seed option."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["phase-c-sweep", "--help"])
+        assert "--screening-seed" in result.output
+
+    def test_phase_c_sweep_missing_config(self):
+        """phase-c-sweep without --config exits non-zero."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["phase-c-sweep"])
+        assert result.exit_code != 0
+
+    def test_phase_c_sweep_invalid_config(self):
+        """phase-c-sweep with nonexistent config exits non-zero."""
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["phase-c-sweep", "--config", "nonexistent.yaml"]
+        )
+        assert result.exit_code != 0
+
+    def test_phase_c_sweep_invalid_seeds(self, tmp_path):
+        """phase-c-sweep with non-integer seeds exits non-zero."""
+        config = {
+            "experiment": {"name": "test", "seed": 42},
+            "data": {"raw_path": "data.csv", "window_size": 21},
+            "model": {"type": "spiking_transformer"},
+            "training": {"epochs": 1},
+            "output": {"dir": str(tmp_path)},
+        }
+        config_path = tmp_path / "config.yaml"
+        with open(config_path, "w") as f:
+            yaml.dump(config, f)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["phase-c-sweep", "--config", str(config_path),
+             "--seeds", "abc,def"],
+        )
+        assert result.exit_code != 0

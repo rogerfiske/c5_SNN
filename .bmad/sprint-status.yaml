@@ -209,8 +209,9 @@ sprints:
       - story_id: "STORY-6.3"
         title: "HP Sweep & Best Model"
         points: 5
-        status: "not_started"
+        status: "defined"
         assigned_to: null
+        story_doc: "docs/stories/STORY-6.3.md"
 
   - sprint_number: 7
     start_date: "2026-03-24"
