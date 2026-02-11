@@ -2,11 +2,13 @@
 
 from c5_snn.models.base import MODEL_REGISTRY, BaseModel, get_model
 from c5_snn.models.baselines import FrequencyBaseline, GRUBaseline
+from c5_snn.models.encoding import SpikeEncoder
 
 __all__ = [
     "BaseModel",
     "FrequencyBaseline",
     "GRUBaseline",
     "MODEL_REGISTRY",
+    "SpikeEncoder",
     "get_model",
 ]
