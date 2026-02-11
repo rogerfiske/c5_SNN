@@ -1107,6 +1107,435 @@ def phase_b_sweep(output_path: str, top_k: int, seeds: str) -> None:
     click.echo()
 
 
+@cli.command("window-tune")
+@click.option(
+    "--config",
+    "config_path",
+    required=True,
+    help="Path to base YAML config (must be spiking_transformer).",
+)
+@click.option(
+    "--windows",
+    "window_str",
+    default="7,14,21,30,45,60,90",
+    help="Comma-separated window sizes to test.",
+    show_default=True,
+)
+@click.option(
+    "--seeds",
+    "seed_str",
+    default="42,123,7",
+    help="Comma-separated seeds for Phase 2 re-runs.",
+    show_default=True,
+)
+@click.option(
+    "--top-k",
+    "top_k",
+    default=3,
+    type=int,
+    help="Number of top window sizes to re-run with seeds.",
+    show_default=True,
+)
+@click.option(
+    "--output",
+    "output_path",
+    default="results/window_tuning.csv",
+    help="Path for screening CSV.",
+    show_default=True,
+)
+@click.option(
+    "--screening-seed",
+    "screening_seed",
+    default=42,
+    type=int,
+    help="Seed for Phase 1 screening runs.",
+    show_default=True,
+)
+def window_tune(
+    config_path: str,
+    window_str: str,
+    seed_str: str,
+    top_k: int,
+    output_path: str,
+    screening_seed: int,
+) -> None:
+    """Sweep window sizes for SpikingTransformer (Phase C)."""
+    import copy
+    import csv
+    import json
+    import time
+    from datetime import datetime, timezone
+
+    from c5_snn.data.dataset import get_dataloaders
+    from c5_snn.data.loader import load_csv
+    from c5_snn.data.splits import create_splits
+    from c5_snn.data.windowing import build_windows
+    from c5_snn.models.base import get_model
+    from c5_snn.training.evaluate import evaluate_model
+    from c5_snn.training.trainer import Trainer
+    from c5_snn.utils.config import load_config
+    from c5_snn.utils.device import get_device
+    from c5_snn.utils.seed import set_global_seed
+
+    # 1. Load and validate config
+    try:
+        config = load_config(config_path)
+    except ConfigError as e:
+        click.echo(f"ERROR: {e}", err=True)
+        sys.exit(1)
+
+    log_level = config.get("log_level", "INFO")
+    setup_logging(log_level)
+
+    # 2. Parse window sizes and seeds
+    try:
+        window_sizes = [int(w.strip()) for w in window_str.split(",")]
+    except ValueError:
+        click.echo(
+            "ERROR: Windows must be comma-separated integers", err=True
+        )
+        sys.exit(1)
+
+    try:
+        seed_list = [int(s.strip()) for s in seed_str.split(",")]
+    except ValueError:
+        click.echo("ERROR: Seeds must be comma-separated integers", err=True)
+        sys.exit(1)
+
+    # 3. Extract config details for display
+    model_cfg = config.get("model", {})
+    model_type = model_cfg.get("type", "spiking_transformer")
+    d_model = model_cfg.get("d_model", "?")
+    n_heads = model_cfg.get("n_heads", "?")
+    n_layers = model_cfg.get("n_layers", "?")
+    data_cfg = config.get("data", {})
+    raw_path = data_cfg.get("raw_path", "data/raw/CA5_matrix_binary.csv")
+    ratios = data_cfg.get("split_ratios", [0.70, 0.15, 0.15])
+    batch_size = int(data_cfg.get("batch_size", 64))
+
+    click.echo()
+    click.echo("Window Size Tuning — Phase C (SpikingTransformer)")
+    click.echo("=" * 51)
+    click.echo()
+    click.echo(f"Config: {config_path}")
+    click.echo(
+        f"Model: {model_type} (d_model={d_model}, "
+        f"n_heads={n_heads}, n_layers={n_layers})"
+    )
+    click.echo(f"Window sizes: {window_sizes}")
+    click.echo(f"Screening seed: {screening_seed}")
+    click.echo()
+
+    # 4. Load raw data once (re-windowed per W)
+    try:
+        df = load_csv(raw_path)
+    except (DataValidationError, FileNotFoundError) as e:
+        click.echo(f"ERROR: Failed to load data: {e}", err=True)
+        sys.exit(1)
+
+    device = get_device()
+
+    # ===== Phase 1: Screening =====
+    click.echo(
+        f"Phase 1: Screening ({len(window_sizes)} window sizes, 1 seed each)"
+    )
+    click.echo("-" * 50)
+
+    sweep_results = []
+
+    for i, W in enumerate(window_sizes):
+        set_global_seed(screening_seed)
+
+        # Rebuild data pipeline for this W
+        try:
+            X, y = build_windows(df, W)
+        except (ConfigError, DataValidationError) as e:
+            click.echo(f"  [SKIP] W={W}: {e}")
+            continue
+
+        split_info = create_splits(
+            n_samples=X.shape[0],
+            ratios=tuple(ratios),
+            window_size=W,
+            dates=df["date"] if "date" in df.columns else None,
+        )
+        dataloaders = get_dataloaders(split_info, X, y, batch_size)
+
+        # Override window_size in config
+        run_config = copy.deepcopy(config)
+        run_config["data"]["window_size"] = W
+        run_config["experiment"]["seed"] = screening_seed
+        run_config["output"] = {
+            "dir": f"results/window_tune_W{W}_screen",
+        }
+        run_config["log_level"] = "WARNING"
+
+        model = get_model(run_config)
+        trainer = Trainer(model, run_config, dataloaders, device)
+
+        t0 = time.time()
+        result = trainer.run()
+        elapsed = time.time() - t0
+
+        # Evaluate on validation set
+        val_eval = evaluate_model(model, dataloaders["val"], device)
+
+        n_train = len(dataloaders["train"].dataset)
+        n_val = len(dataloaders["val"].dataset)
+        n_test = len(dataloaders["test"].dataset)
+
+        row = {
+            "window_size": W,
+            "n_train": n_train,
+            "n_val": n_val,
+            "n_test": n_test,
+            "val_recall_at_20": round(
+                val_eval["metrics"]["recall_at_20"], 4
+            ),
+            "val_hit_at_20": round(val_eval["metrics"]["hit_at_20"], 4),
+            "val_mrr": round(val_eval["metrics"]["mrr"], 4),
+            "training_time_s": round(elapsed, 1),
+            "best_epoch": result["best_epoch"],
+        }
+        sweep_results.append(row)
+
+        click.echo(
+            f"[{i + 1}/{len(window_sizes)}] W={W:<4d} "
+            f"val_recall@20={row['val_recall_at_20']:.4f}  "
+            f"time={elapsed:.1f}s  epoch={result['best_epoch']}"
+        )
+
+    if not sweep_results:
+        click.echo("ERROR: No window sizes produced valid results.", err=True)
+        sys.exit(1)
+
+    # 5. Save screening CSV
+    csv_path = Path(output_path)
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "window_size", "n_train", "n_val", "n_test",
+        "val_recall_at_20", "val_hit_at_20", "val_mrr",
+        "training_time_s", "best_epoch",
+    ]
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(sweep_results)
+
+    # 6. Print screening leaderboard
+    sorted_results = sorted(
+        sweep_results,
+        key=lambda r: r["val_recall_at_20"],
+        reverse=True,
+    )
+
+    click.echo()
+    click.echo("Screening Leaderboard (sorted by val_recall@20):")
+    click.echo(
+        f"{'W':<6}{'n_samples':<11}{'val_R@20':<13}{'val_H@20':<12}"
+        f"{'val_MRR':<10}{'time(s)':<9}{'epoch':<6}"
+    )
+    click.echo("-" * 67)
+    for row in sorted_results:
+        n_total = row["n_train"] + row["n_val"] + row["n_test"]
+        click.echo(
+            f"{row['window_size']:<6}{n_total:<11}"
+            f"{row['val_recall_at_20']:<13.4f}"
+            f"{row['val_hit_at_20']:<12.4f}"
+            f"{row['val_mrr']:<10.4f}"
+            f"{row['training_time_s']:<9.1f}"
+            f"{row['best_epoch']:<6}"
+        )
+
+    # ===== Phase 2: Top-K re-run with multiple seeds =====
+    actual_top_k = min(top_k, len(sorted_results))
+    top_windows = sorted_results[:actual_top_k]
+
+    click.echo()
+    click.echo(
+        f"Phase 2: Top-{actual_top_k} Re-run "
+        f"({len(seed_list)} seeds each, test evaluation)"
+    )
+    click.echo("-" * 54)
+
+    top_results = []
+    total_runs = actual_top_k * len(seed_list)
+    run_idx = 0
+
+    for top_row in top_windows:
+        W = top_row["window_size"]
+        seed_metrics = []
+        total_time = 0.0
+
+        for seed in seed_list:
+            run_idx += 1
+            set_global_seed(seed)
+
+            # Rebuild data pipeline
+            X, y = build_windows(df, W)
+            split_info = create_splits(
+                n_samples=X.shape[0],
+                ratios=tuple(ratios),
+                window_size=W,
+                dates=df["date"] if "date" in df.columns else None,
+            )
+            dataloaders = get_dataloaders(split_info, X, y, batch_size)
+
+            run_config = copy.deepcopy(config)
+            run_config["data"]["window_size"] = W
+            run_config["experiment"]["seed"] = seed
+            run_config["output"] = {
+                "dir": f"results/window_tune_W{W}_seed{seed}",
+            }
+            run_config["log_level"] = "WARNING"
+
+            model = get_model(run_config)
+            trainer = Trainer(model, run_config, dataloaders, device)
+
+            t0 = time.time()
+            trainer.run()
+            elapsed = time.time() - t0
+            total_time += elapsed
+
+            test_eval = evaluate_model(
+                model, dataloaders["test"], device
+            )
+            seed_metrics.append(test_eval["metrics"])
+            click.echo(
+                f"[{run_idx}/{total_runs}] W={W:<4d} seed={seed}  "
+                f"test_recall@20="
+                f"{test_eval['metrics']['recall_at_20']:.4f}  "
+                f"({elapsed:.1f}s)"
+            )
+
+        # Aggregate mean/std across seeds
+        metric_keys = ["recall_at_20", "hit_at_20", "mrr"]
+        metrics_mean = {}
+        metrics_std = {}
+        for key in metric_keys:
+            vals = [m[key] for m in seed_metrics]
+            mean_val = sum(vals) / len(vals)
+            var_val = sum((v - mean_val) ** 2 for v in vals) / len(vals)
+            metrics_mean[key] = round(mean_val, 4)
+            metrics_std[key] = round(var_val**0.5, 4)
+
+        # Get split sizes from last run
+        n_train = len(dataloaders["train"].dataset)
+        n_val = len(dataloaders["val"].dataset)
+        n_test = len(dataloaders["test"].dataset)
+
+        top_results.append({
+            "window_size": W,
+            "n_train": n_train,
+            "n_val": n_val,
+            "n_test": n_test,
+            "metrics_mean": metrics_mean,
+            "metrics_std": metrics_std,
+            "n_seeds": len(seed_list),
+            "training_time_s": round(total_time / len(seed_list), 1),
+        })
+
+    # 7. Print Phase 2 leaderboard
+    top_results_sorted = sorted(
+        top_results,
+        key=lambda r: r["metrics_mean"]["recall_at_20"],
+        reverse=True,
+    )
+
+    click.echo()
+    click.echo("Top-3 Test Results (mean +/- std):")
+    click.echo(
+        f"{'W':<6}{'test_R@20':<20}{'test_H@20':<20}"
+        f"{'test_MRR':<20}{'seeds':<6}"
+    )
+    click.echo("-" * 72)
+    for row in top_results_sorted:
+        m = row["metrics_mean"]
+        s = row["metrics_std"]
+        r20 = f"{m['recall_at_20']:.4f} +/- {s['recall_at_20']:.3f}"
+        h20 = f"{m['hit_at_20']:.4f} +/- {s['hit_at_20']:.3f}"
+        mrr = f"{m['mrr']:.4f} +/- {s['mrr']:.3f}"
+        click.echo(
+            f"{row['window_size']:<6}{r20:<20}{h20:<20}"
+            f"{mrr:<20}{row['n_seeds']:<6}"
+        )
+
+    # 8. Save Phase 2 JSON
+    top_json_path = str(
+        Path(output_path).parent / "window_tuning_top3.json"
+    )
+    top_json_report = {
+        "window_sizes": top_results_sorted,
+        "optimal_window_size": top_results_sorted[0]["window_size"],
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "model_type": model_type,
+        "model_config": {
+            k: v
+            for k, v in model_cfg.items()
+            if k != "type"
+        },
+    }
+    top_json_file = Path(top_json_path)
+    top_json_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(top_json_file, "w") as f:
+        json.dump(top_json_report, f, indent=2)
+
+    # 9. Print analysis
+    optimal_W = top_results_sorted[0]["window_size"]
+    optimal_r20 = top_results_sorted[0]["metrics_mean"]["recall_at_20"]
+
+    # Find W=21 (default) in screening results for comparison
+    default_row = next(
+        (r for r in sweep_results if r["window_size"] == 21), None
+    )
+    smallest_row = min(sweep_results, key=lambda r: r["window_size"])
+
+    click.echo()
+    click.echo("Analysis:")
+    click.echo(f"  Optimal window size:    W={optimal_W}")
+
+    if default_row is not None:
+        default_r20 = default_row["val_recall_at_20"]
+        delta_default = optimal_r20 - default_r20
+        pct_default = (
+            (delta_default / default_r20) * 100 if default_r20 != 0 else 0
+        )
+        click.echo(
+            f"  vs W=21 (default):      {delta_default:+.4f} "
+            f"({pct_default:+.2f}%)"
+        )
+
+    smallest_W = smallest_row["window_size"]
+    smallest_r20 = smallest_row["val_recall_at_20"]
+    delta_small = optimal_r20 - smallest_r20
+    pct_small = (
+        (delta_small / smallest_r20) * 100 if smallest_r20 != 0 else 0
+    )
+    click.echo(
+        f"  vs W={smallest_W} (smallest):     {delta_small:+.4f} "
+        f"({pct_small:+.2f}%)"
+    )
+
+    # Training time trend
+    fastest = min(sweep_results, key=lambda r: r["training_time_s"])
+    slowest = max(sweep_results, key=lambda r: r["training_time_s"])
+    click.echo(
+        f"  Training time trend:    W={fastest['window_size']}: "
+        f"{fastest['training_time_s']:.0f}s, "
+        f"W={slowest['window_size']}: "
+        f"{slowest['training_time_s']:.0f}s"
+    )
+    click.echo(
+        f"  Recommendation:         Use W={optimal_W} for STORY-6.3 HP sweep"
+    )
+
+    click.echo()
+    click.echo("Results saved to:")
+    click.echo(f"  Screening CSV:  {csv_path}")
+    click.echo(f"  Top-3 JSON:     {top_json_path}")
+    click.echo()
+
+
 @cli.command("evaluate")
 @click.option(
     "--checkpoint",

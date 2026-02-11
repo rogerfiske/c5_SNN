@@ -188,7 +188,7 @@ sprints:
     end_date: "2026-03-23"
     capacity_points: 20
     committed_points: 18
-    completed_points: 8
+    completed_points: 13
     status: "in_progress"
     goal: "Spiking Transformer with window tuning and HP sweep"
     stories:
@@ -202,8 +202,10 @@ sprints:
       - story_id: "STORY-6.2"
         title: "Window Size Tuning"
         points: 5
-        status: "not_started"
-        assigned_to: null
+        status: "completed"
+        assigned_to: "ai_dev_agent"
+        completion_date: "2026-02-11"
+        story_doc: "docs/stories/STORY-6.2.md"
       - story_id: "STORY-6.3"
         title: "HP Sweep & Best Model"
         points: 5

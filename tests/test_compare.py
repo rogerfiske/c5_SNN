@@ -1071,3 +1071,114 @@ class TestPhaseBCLI:
         assert spike_gru["metrics_mean"]["recall_at_20"] == pytest.approx(
             0.514
         )
+
+
+# ---------------------------------------------------------------------------
+# Integration test: window-tune CLI (STORY-6.2)
+# ---------------------------------------------------------------------------
+
+
+class TestWindowTuneCLI:
+    """Integration tests for the window-tune CLI command."""
+
+    def test_window_tune_command_exists(self):
+        """window-tune command is registered and shows help."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["window-tune", "--help"])
+        assert result.exit_code == 0
+        assert "Sweep window sizes for SpikingTransformer" in result.output
+
+    def test_window_tune_config_option(self):
+        """window-tune --help shows --config option as required."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["window-tune", "--help"])
+        assert "--config" in result.output
+
+    def test_window_tune_windows_option(self):
+        """window-tune --help shows --windows option with default."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["window-tune", "--help"])
+        assert "--windows" in result.output
+        assert "7,14,21,30,45,60,90" in result.output
+
+    def test_window_tune_seeds_option(self):
+        """window-tune --help shows --seeds option with default."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["window-tune", "--help"])
+        assert "--seeds" in result.output
+        assert "42,123,7" in result.output
+
+    def test_window_tune_top_k_option(self):
+        """window-tune --help shows --top-k option."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["window-tune", "--help"])
+        assert "--top-k" in result.output
+
+    def test_window_tune_output_option(self):
+        """window-tune --help shows --output option with default."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["window-tune", "--help"])
+        assert "--output" in result.output
+        assert "window_tuning.csv" in result.output
+
+    def test_window_tune_screening_seed_option(self):
+        """window-tune --help shows --screening-seed option."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["window-tune", "--help"])
+        assert "--screening-seed" in result.output
+
+    def test_window_tune_missing_config(self):
+        """window-tune without --config exits non-zero."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["window-tune"])
+        assert result.exit_code != 0
+
+    def test_window_tune_invalid_config(self):
+        """window-tune with nonexistent config exits non-zero."""
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["window-tune", "--config", "nonexistent.yaml"]
+        )
+        assert result.exit_code != 0
+
+    def test_window_tune_invalid_windows(self, tmp_path):
+        """window-tune with non-integer --windows exits non-zero."""
+        config = {
+            "experiment": {"name": "test", "seed": 42},
+            "data": {"raw_path": "data.csv", "window_size": 7},
+            "model": {"type": "spiking_transformer", "d_model": 16},
+            "training": {"epochs": 1},
+            "output": {"dir": str(tmp_path)},
+        }
+        config_path = tmp_path / "config.yaml"
+        with open(config_path, "w") as f:
+            yaml.dump(config, f)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["window-tune", "--config", str(config_path),
+             "--windows", "abc,def"],
+        )
+        assert result.exit_code != 0
+
+    def test_window_tune_invalid_seeds(self, tmp_path):
+        """window-tune with non-integer --seeds exits non-zero."""
+        config = {
+            "experiment": {"name": "test", "seed": 42},
+            "data": {"raw_path": "data.csv", "window_size": 7},
+            "model": {"type": "spiking_transformer", "d_model": 16},
+            "training": {"epochs": 1},
+            "output": {"dir": str(tmp_path)},
+        }
+        config_path = tmp_path / "config.yaml"
+        with open(config_path, "w") as f:
+            yaml.dump(config, f)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["window-tune", "--config", str(config_path),
+             "--seeds", "abc,def"],
+        )
+        assert result.exit_code != 0

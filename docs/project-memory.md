@@ -57,7 +57,7 @@
 - **Models:** FrequencyBaseline (heuristic, no params), GRUBaseline (learned, GRU + linear head)
 - **Trainer:** Generic training loop; early stopping, checkpoint saving, metrics CSV, config snapshot, pip freeze
 - **Comparison:** `build_comparison()` aggregates multi-seed results with mean/std; `format_comparison_table()` for display
-- **CLI commands:** validate-data, train, evaluate, compare, phase-a, phase-b-sweep, phase-b
+- **CLI commands:** validate-data, train, evaluate, compare, phase-a, phase-b-sweep, phase-b, window-tune
 - **SNN models (Phase A):** SpikingMLP (FC+LIF), SpikingCNN1D (Conv1d+LIF) — both use SpikeEncoder, surrogate gradients
 - **SNN models (Phase B):** SpikeGRU (RLeaky recurrent LIF) — processes window event-by-event with accumulating membrane state
 - **SNN models (Phase C):** SpikingTransformer (SSA + spiking FFN with LIF) — Spikformer-style spike-form Q/K/V attention without softmax, learnable positional encoding, 286,887 params (default config)
@@ -147,14 +147,49 @@
 - Window size tuning (currently W=21, try 7-90) is likely a stronger lever than architecture
 - Consider that the dataset's temporal structure may be inherently simple, limiting architecture advantages
 
+## Phase C Window Size Tuning Results (STORY-6.2)
+
+**Run date:** 2026-02-11 | **Model:** SpikingTransformer (d_model=128, n_heads=4, n_layers=2) | **Encoding:** direct
+
+**Phase 1 Screening (seed=42, 7 window sizes):**
+
+| W | n_samples | val_R@20 | val_H@20 | val_MRR | time(s) | epoch |
+|---|-----------|----------|----------|---------|---------|-------|
+| 90 | 11,613 | **0.5144** | 0.9770 | 0.3166 | 432.3 | 20 |
+| 7 | 11,696 | 0.5073 | 0.9749 | 0.3218 | 31.9 | 1 |
+| 14 | 11,689 | 0.5071 | 0.9749 | 0.3215 | 40.1 | 1 |
+| 45 | 11,658 | 0.5070 | 0.9754 | 0.3231 | 84.4 | 1 |
+| 21 | 11,682 | 0.5067 | 0.9749 | 0.3214 | 49.7 | 1 |
+| 60 | 11,643 | 0.5066 | 0.9754 | 0.3226 | 100.8 | 1 |
+| 30 | 11,673 | 0.5065 | 0.9749 | 0.3229 | 61.5 | 1 |
+
+**Phase 2 Top-3 Test Results (seeds=42,123,7):**
+
+| W | test_R@20 | test_H@20 | test_MRR | seeds | avg time(s) |
+|---|-----------|-----------|----------|-------|-------------|
+| 90 | **0.5107 +/- 0.003** | 0.9778 +/- 0.002 | 0.3154 +/- 0.002 | 3 | 308.1 |
+| 7 | 0.5067 +/- 0.004 | 0.9793 +/- 0.003 | 0.3069 +/- 0.002 | 3 | 37.0 |
+| 14 | 0.5066 +/- 0.004 | 0.9793 +/- 0.003 | 0.3069 +/- 0.002 | 3 | 48.0 |
+
+**Key findings:**
+1. **Optimal window size: W=90** — longest context tested (+0.79% vs default W=21)
+2. **W=90 is the only window that trains beyond epoch 1** — all others early-stop at epoch 11 with no improvement
+3. **W=7-60 produce nearly identical results** (~0.507 val_R@20) — the model isn't utilizing short/medium context
+4. **W=90 needs ~20 epochs** to reach its best, suggesting the transformer learns longer-range dependencies with more context
+5. **Training time scales linearly with W:** W=7: 32s, W=90: 432s (13.5x slower)
+6. **Confirmed on test set with 3 seeds:** W=90 = 0.5107 +/- 0.003 vs W=7 = 0.5067 +/- 0.004
+7. **STORY-6.3 HP sweep should use W=90** as the base window size
+
+**Resolved open question:** Optimal W = 90 (was 21 default). Longer context helps the SpikingTransformer.
+
 ## Test Coverage
 
-- **Total tests:** 464 (all passing)
+- **Total tests:** 475 (all passing)
 - **Test files:** test_validation, test_loader, test_logging_setup, test_seed, test_config, test_windowing, test_splits, test_baselines, test_metrics, test_evaluate_cli, test_train, test_compare, test_snn_models
 
 ## Next Actions
 
-- Sprint 6 in progress: STORY-6.1 complete, next is window size tuning (STORY-6.2) then HP sweep (STORY-6.3).
-- Window size tuning (W=7-90) is likely a stronger lever than architecture changes.
-- SpikingTransformer smoke test showed val_recall_at_20=0.5067 after 2 epochs — in expected range.
+- Sprint 6 in progress: STORY-6.1, STORY-6.2 complete, next is HP sweep (STORY-6.3).
+- STORY-6.3 HP sweep should use W=90 as base window size.
+- SpikingTransformer at W=90 shows promising multi-epoch training (unlike W=7-60 which plateau immediately).
 - Consider that all learned models cluster ~0.51 Recall@20 — dataset temporal structure may be inherently simple.
