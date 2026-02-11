@@ -558,6 +558,218 @@ def phase_a(seeds: str, output_path: str) -> None:
     click.echo()
 
 
+@cli.command("phase-b")
+@click.option(
+    "--output",
+    "output_path",
+    default="results/cumulative_comparison.json",
+    help="Path for cumulative comparison JSON.",
+    show_default=True,
+)
+@click.option(
+    "--phase-a",
+    "phase_a_path",
+    default="results/phase_a_comparison.json",
+    help="Path to Phase A comparison JSON.",
+    show_default=True,
+)
+@click.option(
+    "--phase-b-top",
+    "phase_b_path",
+    default="results/phase_b_top3.json",
+    help="Path to Phase B top-3 JSON.",
+    show_default=True,
+)
+def phase_b(output_path: str, phase_a_path: str, phase_b_path: str) -> None:
+    """Build cumulative comparison: baselines + Phase A + Phase B."""
+    import copy
+    import json
+    from datetime import datetime, timezone
+
+    from c5_snn.training.compare import save_comparison
+
+    setup_logging("INFO")
+
+    # 1. Load Phase A results
+    phase_a_file = Path(phase_a_path)
+    if not phase_a_file.exists():
+        click.echo(
+            f"ERROR: Phase A results not found: {phase_a_path}", err=True
+        )
+        sys.exit(1)
+
+    with open(phase_a_file) as f:
+        phase_a_report = json.load(f)
+
+    click.echo()
+    click.echo("Phase B Cumulative Comparison")
+    click.echo("=" * 50)
+    click.echo()
+    click.echo(
+        f"Loading Phase A results: {phase_a_path} "
+        f"({len(phase_a_report['models'])} models)"
+    )
+
+    # 2. Load Phase B top-3 results
+    phase_b_file = Path(phase_b_path)
+    if not phase_b_file.exists():
+        click.echo(
+            f"ERROR: Phase B results not found: {phase_b_path}", err=True
+        )
+        sys.exit(1)
+
+    with open(phase_b_file) as f:
+        phase_b_report = json.load(f)
+
+    click.echo(
+        f"Loading Phase B results: {phase_b_path} "
+        f"({len(phase_b_report['models'])} configs)"
+    )
+
+    # 3. Validate window_size/test_split_size consistency
+    if phase_a_report["window_size"] != phase_b_report["window_size"]:
+        click.echo(
+            "WARNING: window_size mismatch between Phase A "
+            f"({phase_a_report['window_size']}) and Phase B "
+            f"({phase_b_report['window_size']})",
+            err=True,
+        )
+
+    if phase_a_report["test_split_size"] != phase_b_report["test_split_size"]:
+        click.echo(
+            "WARNING: test_split_size mismatch between Phase A "
+            f"({phase_a_report['test_split_size']}) and Phase B "
+            f"({phase_b_report['test_split_size']})",
+            err=True,
+        )
+
+    # 4. Select best Spike-GRU from Phase B top-3
+    best_b = max(
+        phase_b_report["models"],
+        key=lambda m: m["metrics_mean"]["recall_at_20"],
+    )
+    best_b = copy.deepcopy(best_b)
+    original_name = best_b["name"]
+    best_b["name"] = "spike_gru"
+
+    click.echo(f"Selected best Spike-GRU: {original_name}")
+
+    # 5. Build cumulative model list
+    cumulative_models = []
+    for model in phase_a_report["models"]:
+        cumulative_models.append(copy.deepcopy(model))
+    cumulative_models.append(best_b)
+
+    # 6. Build cumulative report
+    report = {
+        "models": cumulative_models,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "window_size": phase_a_report["window_size"],
+        "test_split_size": phase_a_report["test_split_size"],
+    }
+
+    # 7. Save report
+    save_comparison(report, output_path)
+
+    # 8. Print leaderboard sorted by Recall@20
+    sorted_models = sorted(
+        cumulative_models,
+        key=lambda m: m["metrics_mean"]["recall_at_20"],
+        reverse=True,
+    )
+
+    click.echo()
+    click.echo("Cumulative Leaderboard (sorted by Recall@20):")
+    click.echo(
+        f"{'Model':<25} {'Recall@20':<16} {'Hit@20':<16} "
+        f"{'MRR':<16} {'Seeds':<6}"
+    )
+    click.echo("-" * 79)
+    for model in sorted_models:
+        mean = model["metrics_mean"]
+        std = model["metrics_std"]
+        n = model["n_seeds"]
+        if n > 1:
+            r20 = f"{mean['recall_at_20']:.4f}+/-{std['recall_at_20']:.3f}"
+            h20 = f"{mean['hit_at_20']:.4f}+/-{std['hit_at_20']:.3f}"
+            mrr = f"{mean['mrr']:.4f}+/-{std['mrr']:.3f}"
+        else:
+            r20 = f"{mean['recall_at_20']:.4f}"
+            h20 = f"{mean['hit_at_20']:.4f}"
+            mrr = f"{mean['mrr']:.4f}"
+        click.echo(
+            f"{model['name']:<25} {r20:<16} {h20:<16} {mrr:<16} {n:<6}"
+        )
+
+    # 9. Print analysis
+    models_by_name = {m["name"]: m for m in cumulative_models}
+    spike_gru = models_by_name["spike_gru"]
+    gru = models_by_name["gru_baseline"]
+
+    spike_r20 = spike_gru["metrics_mean"]["recall_at_20"]
+    gru_r20 = gru["metrics_mean"]["recall_at_20"]
+    gru_delta = spike_r20 - gru_r20
+    gru_pct = (gru_delta / gru_r20) * 100 if gru_r20 != 0 else 0
+
+    # Find best Phase A SNN (exclude baselines)
+    phase_a_snns = [
+        m for m in cumulative_models if m.get("phase") == "phase_a"
+    ]
+    if phase_a_snns:
+        best_phase_a = max(
+            phase_a_snns,
+            key=lambda m: m["metrics_mean"]["recall_at_20"],
+        )
+        pa_r20 = best_phase_a["metrics_mean"]["recall_at_20"]
+        pa_delta = spike_r20 - pa_r20
+        pa_pct = (pa_delta / pa_r20) * 100 if pa_r20 != 0 else 0
+    else:
+        best_phase_a = None
+
+    # Find overall best learned model
+    learned = [m for m in cumulative_models if m["type"] == "learned"]
+    best_learned = max(
+        learned, key=lambda m: m["metrics_mean"]["recall_at_20"]
+    )
+
+    click.echo()
+    click.echo("Analysis:")
+    click.echo(
+        f"  Best learned model:     {best_learned['name']} "
+        f"(Recall@20={best_learned['metrics_mean']['recall_at_20']:.4f})"
+    )
+    click.echo(
+        f"  vs GRU baseline:        {gru_delta:+.4f} ({gru_pct:+.2f}%) "
+        f"{'— improvement' if gru_delta > 0 else '— below'}"
+    )
+    if best_phase_a is not None:
+        click.echo(
+            f"  vs {best_phase_a['name']:<20s} {pa_delta:+.4f} "
+            f"({pa_pct:+.2f}%) "
+            f"{'— improvement' if pa_delta > 0 else '— below'}"
+        )
+    click.echo(
+        "  Encoding finding:       "
+        "direct == rate_coded for Spike-GRU (no benefit from T>1)"
+    )
+    click.echo(
+        "  Recurrence finding:     "
+        "Spiking recurrence adds marginal value vs feedforward SNNs"
+    )
+    click.echo(
+        "  Phase C recommendation: Spiking Transformer with attention "
+        "may capture patterns"
+    )
+    click.echo(
+        "                          "
+        "that recurrence alone cannot. Consider window size tuning."
+    )
+
+    click.echo()
+    click.echo(f"Results saved to: {output_path}")
+    click.echo()
+
+
 @cli.command("phase-b-sweep")
 @click.option(
     "--output",

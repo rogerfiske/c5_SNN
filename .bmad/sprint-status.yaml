@@ -157,8 +157,8 @@ sprints:
     end_date: "2026-03-16"
     capacity_points: 20
     committed_points: 13
-    completed_points: 10
-    status: "in_progress"
+    completed_points: 13
+    status: "completed"
     goal: "Spike-GRU with HP sweep, cumulative leaderboard"
     stories:
       - story_id: "STORY-5.1"
@@ -178,8 +178,10 @@ sprints:
       - story_id: "STORY-5.3"
         title: "Phase B Evaluation & Comparison"
         points: 3
-        status: "not_started"
-        assigned_to: null
+        status: "completed"
+        assigned_to: "ai_dev_agent"
+        completion_date: "2026-02-11"
+        story_doc: "docs/stories/STORY-5.3.md"
 
   - sprint_number: 6
     start_date: "2026-03-17"
@@ -231,7 +233,7 @@ velocity:
   sprint_2: 16
   sprint_3: 19
   sprint_4: 18
-  sprint_5: null
+  sprint_5: 13
   sprint_6: null
   sprint_7: null
   rolling_average: null

@@ -801,3 +801,273 @@ class TestPhaseBSweepCLI:
             cli, ["phase-b-sweep", "--seeds", "abc,def"]
         )
         assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# Integration test: phase-b CLI (STORY-5.3)
+# ---------------------------------------------------------------------------
+
+
+def _make_phase_a_json(path, models=None):
+    """Create a minimal Phase A comparison JSON for testing."""
+    if models is None:
+        models = [
+            {
+                "name": "frequency_baseline",
+                "type": "heuristic",
+                "phase": "baseline",
+                "metrics_mean": {
+                    "recall_at_5": 0.13, "recall_at_20": 0.52,
+                    "hit_at_5": 0.52, "hit_at_20": 0.98, "mrr": 0.31,
+                },
+                "metrics_std": {
+                    "recall_at_5": 0.0, "recall_at_20": 0.0,
+                    "hit_at_5": 0.0, "hit_at_20": 0.0, "mrr": 0.0,
+                },
+                "n_seeds": 1,
+                "training_time_s": 0,
+                "environment": "local",
+            },
+            {
+                "name": "gru_baseline",
+                "type": "learned",
+                "phase": "baseline",
+                "metrics_mean": {
+                    "recall_at_5": 0.12, "recall_at_20": 0.51,
+                    "hit_at_5": 0.51, "hit_at_20": 0.97, "mrr": 0.31,
+                },
+                "metrics_std": {
+                    "recall_at_5": 0.002, "recall_at_20": 0.003,
+                    "hit_at_5": 0.01, "hit_at_20": 0.003, "mrr": 0.002,
+                },
+                "n_seeds": 3,
+                "training_time_s": 60.0,
+                "environment": "local",
+            },
+            {
+                "name": "spiking_mlp",
+                "type": "learned",
+                "phase": "phase_a",
+                "metrics_mean": {
+                    "recall_at_5": 0.13, "recall_at_20": 0.5125,
+                    "hit_at_5": 0.52, "hit_at_20": 0.97, "mrr": 0.31,
+                },
+                "metrics_std": {
+                    "recall_at_5": 0.002, "recall_at_20": 0.003,
+                    "hit_at_5": 0.01, "hit_at_20": 0.001, "mrr": 0.007,
+                },
+                "n_seeds": 3,
+                "training_time_s": 33.0,
+                "environment": "local",
+            },
+            {
+                "name": "spiking_cnn1d",
+                "type": "learned",
+                "phase": "phase_a",
+                "metrics_mean": {
+                    "recall_at_5": 0.12, "recall_at_20": 0.515,
+                    "hit_at_5": 0.50, "hit_at_20": 0.98, "mrr": 0.30,
+                },
+                "metrics_std": {
+                    "recall_at_5": 0.002, "recall_at_20": 0.002,
+                    "hit_at_5": 0.004, "hit_at_20": 0.002, "mrr": 0.001,
+                },
+                "n_seeds": 3,
+                "training_time_s": 33.0,
+                "environment": "local",
+            },
+        ]
+    report = {
+        "models": models,
+        "generated_at": "2026-02-11T00:00:00+00:00",
+        "window_size": 21,
+        "test_split_size": 1753,
+    }
+    with open(path, "w") as f:
+        json.dump(report, f)
+
+
+def _make_phase_b_json(path, models=None):
+    """Create a minimal Phase B top-3 JSON for testing."""
+    if models is None:
+        models = [
+            {
+                "name": "spike_gru_top1",
+                "type": "learned",
+                "phase": "phase_b",
+                "metrics_mean": {
+                    "recall_at_5": 0.127, "recall_at_20": 0.514,
+                    "hit_at_5": 0.505, "hit_at_20": 0.98, "mrr": 0.311,
+                },
+                "metrics_std": {
+                    "recall_at_5": 0.0, "recall_at_20": 0.0,
+                    "hit_at_5": 0.0, "hit_at_20": 0.0, "mrr": 0.0,
+                },
+                "n_seeds": 3,
+                "training_time_s": 114.0,
+                "environment": "local",
+            },
+            {
+                "name": "spike_gru_top2",
+                "type": "learned",
+                "phase": "phase_b",
+                "metrics_mean": {
+                    "recall_at_5": 0.127, "recall_at_20": 0.513,
+                    "hit_at_5": 0.505, "hit_at_20": 0.98, "mrr": 0.311,
+                },
+                "metrics_std": {
+                    "recall_at_5": 0.0, "recall_at_20": 0.0,
+                    "hit_at_5": 0.0, "hit_at_20": 0.0, "mrr": 0.0,
+                },
+                "n_seeds": 3,
+                "training_time_s": 860.0,
+                "environment": "local",
+            },
+            {
+                "name": "spike_gru_top3",
+                "type": "learned",
+                "phase": "phase_b",
+                "metrics_mean": {
+                    "recall_at_5": 0.127, "recall_at_20": 0.512,
+                    "hit_at_5": 0.505, "hit_at_20": 0.98, "mrr": 0.311,
+                },
+                "metrics_std": {
+                    "recall_at_5": 0.0, "recall_at_20": 0.0,
+                    "hit_at_5": 0.0, "hit_at_20": 0.0, "mrr": 0.0,
+                },
+                "n_seeds": 3,
+                "training_time_s": 100.0,
+                "environment": "local",
+            },
+        ]
+    report = {
+        "models": models,
+        "generated_at": "2026-02-11T00:00:00+00:00",
+        "window_size": 21,
+        "test_split_size": 1753,
+    }
+    with open(path, "w") as f:
+        json.dump(report, f)
+
+
+class TestPhaseBCLI:
+    """Integration tests for the phase-b CLI command (STORY-5.3)."""
+
+    def test_phase_b_command_exists(self):
+        """phase-b command is registered and shows help."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["phase-b", "--help"])
+        assert result.exit_code == 0
+        assert "Build cumulative comparison" in result.output
+
+    def test_phase_b_output_option(self):
+        """phase-b --help shows --output option with default."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["phase-b", "--help"])
+        assert "--output" in result.output
+        assert "cumulative_comparison.json" in result.output
+
+    def test_phase_b_phase_a_option(self):
+        """phase-b --help shows --phase-a option with default."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["phase-b", "--help"])
+        assert "--phase-a" in result.output
+        assert "phase_a_comparison.json" in result.output
+
+    def test_phase_b_phase_b_top_option(self):
+        """phase-b --help shows --phase-b-top option with default."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["phase-b", "--help"])
+        assert "--phase-b-top" in result.output
+        assert "phase_b_top3.json" in result.output
+
+    def test_phase_b_missing_phase_a(self, tmp_path):
+        """phase-b with missing Phase A file exits non-zero."""
+        phase_b_json = tmp_path / "phase_b_top3.json"
+        _make_phase_b_json(phase_b_json)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "phase-b",
+            "--phase-a", str(tmp_path / "nonexistent.json"),
+            "--phase-b-top", str(phase_b_json),
+        ])
+        assert result.exit_code != 0
+
+    def test_phase_b_missing_phase_b(self, tmp_path):
+        """phase-b with missing Phase B file exits non-zero."""
+        phase_a_json = tmp_path / "phase_a.json"
+        _make_phase_a_json(phase_a_json)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "phase-b",
+            "--phase-a", str(phase_a_json),
+            "--phase-b-top", str(tmp_path / "nonexistent.json"),
+        ])
+        assert result.exit_code != 0
+
+    def test_phase_b_produces_output(self, tmp_path):
+        """phase-b merges Phase A + B and produces cumulative JSON."""
+        phase_a_json = tmp_path / "phase_a.json"
+        phase_b_json = tmp_path / "phase_b_top3.json"
+        output_json = tmp_path / "cumulative.json"
+
+        _make_phase_a_json(phase_a_json)
+        _make_phase_b_json(phase_b_json)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "phase-b",
+            "--phase-a", str(phase_a_json),
+            "--phase-b-top", str(phase_b_json),
+            "--output", str(output_json),
+        ])
+
+        assert result.exit_code == 0, f"CLI failed: {result.output}"
+        assert "Cumulative Leaderboard" in result.output
+        assert "Analysis:" in result.output
+        assert "spike_gru" in result.output
+
+        # Verify JSON output
+        assert output_json.exists()
+        with open(output_json) as f:
+            report = json.load(f)
+        assert len(report["models"]) == 5
+        names = [m["name"] for m in report["models"]]
+        assert "frequency_baseline" in names
+        assert "gru_baseline" in names
+        assert "spiking_mlp" in names
+        assert "spiking_cnn1d" in names
+        assert "spike_gru" in names
+        assert report["window_size"] == 21
+        assert report["test_split_size"] == 1753
+
+    def test_phase_b_selects_best_spike_gru(self, tmp_path):
+        """phase-b selects highest recall@20 from Phase B top-3."""
+        phase_a_json = tmp_path / "phase_a.json"
+        phase_b_json = tmp_path / "phase_b_top3.json"
+        output_json = tmp_path / "cumulative.json"
+
+        _make_phase_a_json(phase_a_json)
+        _make_phase_b_json(phase_b_json)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "phase-b",
+            "--phase-a", str(phase_a_json),
+            "--phase-b-top", str(phase_b_json),
+            "--output", str(output_json),
+        ])
+
+        assert result.exit_code == 0
+        with open(output_json) as f:
+            report = json.load(f)
+
+        spike_gru = [
+            m for m in report["models"] if m["name"] == "spike_gru"
+        ][0]
+        # Best from Phase B top-3 has recall@20=0.514
+        assert spike_gru["metrics_mean"]["recall_at_20"] == pytest.approx(
+            0.514
+        )
