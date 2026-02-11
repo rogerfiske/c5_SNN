@@ -119,8 +119,8 @@ sprints:
     end_date: "2026-03-09"
     capacity_points: 20
     committed_points: 18
-    completed_points: 15
-    status: "in_progress"
+    completed_points: 18
+    status: "completed"
     goal: "First SNN models, Phase A vs baseline comparison"
     stories:
       - story_id: "STORY-4.1"
@@ -147,8 +147,9 @@ sprints:
       - story_id: "STORY-4.4"
         title: "Phase A Training & Comparison"
         points: 3
-        status: "defined"
-        assigned_to: null
+        status: "completed"
+        assigned_to: "ai_dev_agent"
+        completion_date: "2026-02-11"
         story_doc: "docs/stories/STORY-4.4.md"
 
   - sprint_number: 5
@@ -225,7 +226,7 @@ velocity:
   sprint_1: 13
   sprint_2: 16
   sprint_3: 19
-  sprint_4: null
+  sprint_4: 18
   sprint_5: null
   sprint_6: null
   sprint_7: null

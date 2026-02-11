@@ -3,8 +3,8 @@
 **Epic:** Epic 4 — SNN Phase A
 **Priority:** Must Have
 **Story Points:** 3
-**Status:** Not Started
-**Assigned To:** Unassigned
+**Status:** Completed
+**Assigned To:** ai_dev_agent
 **Created:** 2026-02-11
 **Sprint:** 4
 
@@ -296,8 +296,21 @@ The `phase-a` command does track total training time per model for the compariso
 
 **Status History:**
 - 2026-02-11: Created by Scrum Master (AI)
+- 2026-02-11: Started by Developer (AI)
+- 2026-02-11: Completed by Developer (AI)
 
-**Actual Effort:** TBD (will be filled during/after implementation)
+**Actual Effort:** 3 points (matched estimate)
+
+**Implementation Notes:**
+- Added `phase-a` CLI command to `src/c5_snn/cli.py` (~200 lines)
+- Command constructs configs programmatically (no YAML meta-config needed)
+- Trains 4 models: FrequencyBaseline (1 run), GRU (3 seeds), SpikingMLP (3 seeds), SpikingCNN1D (3 seeds)
+- All models cluster around Recall@20 ~0.51 with direct encoding
+- FrequencyBaseline leads (0.523); SpikingCNN1D edges SpikingMLP (0.5152 vs 0.5125)
+- SNN models train ~2x faster than GRU (33s vs 60s) with T=1 direct encoding
+- 5 new tests (356 total), all passing
+- All 15 acceptance criteria validated
+- Key finding: direct encoding (T=1) limits SNN potential — rate_coded recommended for Phase B
 
 ---
 
