@@ -157,15 +157,17 @@ sprints:
     end_date: "2026-03-16"
     capacity_points: 20
     committed_points: 13
-    completed_points: 0
-    status: "not_started"
+    completed_points: 5
+    status: "in_progress"
     goal: "Spike-GRU with HP sweep, cumulative leaderboard"
     stories:
       - story_id: "STORY-5.1"
         title: "Spike-GRU Architecture"
         points: 5
-        status: "not_started"
-        assigned_to: null
+        status: "completed"
+        assigned_to: "ai_dev_agent"
+        completion_date: "2026-02-11"
+        story_doc: "docs/stories/STORY-5.1.md"
       - story_id: "STORY-5.2"
         title: "HP Sweep"
         points: 5

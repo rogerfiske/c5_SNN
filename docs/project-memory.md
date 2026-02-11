@@ -57,8 +57,9 @@
 - **Trainer:** Generic training loop; early stopping, checkpoint saving, metrics CSV, config snapshot, pip freeze
 - **Comparison:** `build_comparison()` aggregates multi-seed results with mean/std; `format_comparison_table()` for display
 - **CLI commands:** validate-data, train, evaluate, compare, phase-a
-- **SNN models:** SpikingMLP (FC+LIF), SpikingCNN1D (Conv1d+LIF) — both use SpikeEncoder, surrogate gradients
-- **snnTorch patterns:** `snntorch.Leaky` with `init_hidden=False`, manual membrane potential management, `surrogate.fast_sigmoid(slope=25)`
+- **SNN models (Phase A):** SpikingMLP (FC+LIF), SpikingCNN1D (Conv1d+LIF) — both use SpikeEncoder, surrogate gradients
+- **SNN models (Phase B):** SpikeGRU (RLeaky recurrent LIF) — processes window event-by-event with accumulating membrane state
+- **snnTorch patterns:** `snntorch.Leaky` with `init_hidden=False` (Phase A); `snntorch.RLeaky` with `all_to_all=True` (Phase B); manual membrane potential management, `surrogate.fast_sigmoid(slope=25)`
 - **SNN encoding:** `direct` mode passes binary input as-is (T=1); `rate_coded` samples Bernoulli spikes (T=timesteps)
 
 ## Compute Policy
@@ -114,11 +115,11 @@
 
 ## Test Coverage
 
-- **Total tests:** 356 (all passing)
+- **Total tests:** 400 (all passing)
 - **Test files:** test_validation, test_loader, test_logging_setup, test_seed, test_config, test_windowing, test_splits, test_baselines, test_metrics, test_evaluate_cli, test_train, test_compare, test_snn_models
 
 ## Next Actions
 
-- Sprint 5: Spike-GRU architecture, HP sweep, Phase B evaluation.
+- Sprint 5: HP sweep (STORY-5.2), Phase B evaluation & comparison (STORY-5.3).
 - Try rate_coded encoding (T=5-10) in HP sweep to give SNN membrane dynamics time to accumulate.
 - Investigate optimal window size W (currently 21, tune 7-90 in Sprint 6).

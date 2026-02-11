@@ -4,6 +4,7 @@ from c5_snn.models.base import MODEL_REGISTRY, BaseModel, get_model
 from c5_snn.models.baselines import FrequencyBaseline, GRUBaseline
 from c5_snn.models.encoding import SpikeEncoder
 from c5_snn.models.snn_models import SpikingCNN1D, SpikingMLP
+from c5_snn.models.snn_phase_b import SpikeGRU
 
 __all__ = [
     "BaseModel",
@@ -11,6 +12,7 @@ __all__ = [
     "GRUBaseline",
     "MODEL_REGISTRY",
     "SpikeEncoder",
+    "SpikeGRU",
     "SpikingCNN1D",
     "SpikingMLP",
     "get_model",

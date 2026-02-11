@@ -1,9 +1,10 @@
-"""Tests for SNN models (STORY-4.2, STORY-4.3)."""
+"""Tests for SNN models (STORY-4.2, STORY-4.3, STORY-5.1)."""
 
 import torch
 
 from c5_snn.models.base import MODEL_REGISTRY, get_model
 from c5_snn.models.snn_models import SpikingCNN1D, SpikingMLP
+from c5_snn.models.snn_phase_b import SpikeGRU
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -784,6 +785,417 @@ class TestCNNConfigFile:
         import yaml
 
         with open("configs/snn_phase_a_cnn.yaml") as f:
+            config = yaml.safe_load(f)
+
+        model = get_model(config)
+        x = _binary_input(batch=4, window=21)
+        out = model(x)
+        assert out.shape == (4, 39)
+
+
+# ===========================================================================
+# SpikeGRU tests (STORY-5.1)
+# ===========================================================================
+
+
+def _make_gru_config(
+    hidden_size=128,
+    num_layers=1,
+    beta=0.95,
+    dropout=0.0,
+    encoding="direct",
+    timesteps=10,
+    window_size=21,
+) -> dict:
+    """Create a minimal config dict for SpikeGRU."""
+    return {
+        "model": {
+            "type": "spike_gru",
+            "encoding": encoding,
+            "timesteps": timesteps,
+            "beta": beta,
+            "hidden_size": hidden_size,
+            "num_layers": num_layers,
+            "dropout": dropout,
+        },
+        "data": {
+            "window_size": window_size,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# SpikeGRU — Construction
+# ---------------------------------------------------------------------------
+
+
+class TestSpikeGRUConstruction:
+    """Verify SpikeGRU construction and config parsing."""
+
+    def test_default_hidden_size(self):
+        """Default hidden_size is 128."""
+        model = SpikeGRU(_make_gru_config())
+        assert model.hidden_size == 128
+
+    def test_custom_hidden_size(self):
+        """Custom hidden_size from config."""
+        model = SpikeGRU(_make_gru_config(hidden_size=256))
+        assert model.hidden_size == 256
+
+    def test_default_num_layers(self):
+        """Default num_layers is 1."""
+        model = SpikeGRU(_make_gru_config())
+        assert model.num_layers == 1
+
+    def test_custom_num_layers(self):
+        """Custom num_layers from config."""
+        model = SpikeGRU(_make_gru_config(num_layers=2))
+        assert model.num_layers == 2
+        assert len(model.rlif_layers) == 2
+
+    def test_default_beta(self):
+        """Default beta is 0.95."""
+        model = SpikeGRU(_make_gru_config())
+        assert model.beta == 0.95
+
+    def test_custom_beta(self):
+        """Custom beta from config."""
+        model = SpikeGRU(_make_gru_config(beta=0.80))
+        assert model.beta == 0.80
+
+    def test_is_base_model(self):
+        """SpikeGRU subclasses BaseModel."""
+        from c5_snn.models.base import BaseModel
+
+        model = SpikeGRU(_make_gru_config())
+        assert isinstance(model, BaseModel)
+
+    def test_is_nn_module(self):
+        """SpikeGRU is an nn.Module."""
+        model = SpikeGRU(_make_gru_config())
+        assert isinstance(model, torch.nn.Module)
+
+    def test_rlif_layer_count(self):
+        """Number of RLeaky layers matches num_layers."""
+        model = SpikeGRU(_make_gru_config(num_layers=3))
+        assert len(model.rlif_layers) == 3
+
+    def test_input_projection(self):
+        """Input projection maps 39 features to hidden_size."""
+        model = SpikeGRU(_make_gru_config(hidden_size=64))
+        assert model.fc_input.in_features == 39
+        assert model.fc_input.out_features == 64
+
+    def test_readout_layer(self):
+        """Readout layer projects from hidden_size to 39."""
+        model = SpikeGRU(_make_gru_config(hidden_size=64))
+        assert model.readout.in_features == 64
+        assert model.readout.out_features == 39
+
+    def test_encoding_mode_stored(self):
+        """Encoder encoding mode matches config."""
+        model = SpikeGRU(_make_gru_config(encoding="rate_coded"))
+        assert model.encoder.encoding == "rate_coded"
+
+    def test_dropout_none_single_layer(self):
+        """Dropout is None for single-layer models."""
+        model = SpikeGRU(_make_gru_config(num_layers=1, dropout=0.1))
+        assert model.dropout is None
+
+    def test_dropout_active_multi_layer(self):
+        """Dropout is active for multi-layer models with dropout > 0."""
+        model = SpikeGRU(_make_gru_config(num_layers=2, dropout=0.1))
+        assert model.dropout is not None
+
+    def test_no_dropout_when_zero(self):
+        """Dropout is None when rate is 0.0 even with multi-layer."""
+        model = SpikeGRU(_make_gru_config(num_layers=2, dropout=0.0))
+        assert model.dropout is None
+
+
+# ---------------------------------------------------------------------------
+# SpikeGRU — Forward pass
+# ---------------------------------------------------------------------------
+
+
+class TestSpikeGRUForward:
+    """Verify SpikeGRU forward pass shapes."""
+
+    def test_forward_shape_default(self):
+        """Forward: (4, 21, 39) -> (4, 39)."""
+        model = SpikeGRU(_make_gru_config())
+        x = _binary_input(batch=4, window=21)
+        out = model(x)
+        assert out.shape == (4, 39)
+
+    def test_forward_shape_batch_1(self):
+        """Forward: (1, 21, 39) -> (1, 39)."""
+        model = SpikeGRU(_make_gru_config())
+        x = _binary_input(batch=1, window=21)
+        out = model(x)
+        assert out.shape == (1, 39)
+
+    def test_forward_shape_large_batch(self):
+        """Forward: (64, 21, 39) -> (64, 39)."""
+        model = SpikeGRU(_make_gru_config())
+        x = _binary_input(batch=64, window=21)
+        out = model(x)
+        assert out.shape == (64, 39)
+
+    def test_forward_shape_window_7(self):
+        """Forward with W=7: (4, 7, 39) -> (4, 39)."""
+        model = SpikeGRU(_make_gru_config(window_size=7))
+        x = _binary_input(batch=4, window=7)
+        out = model(x)
+        assert out.shape == (4, 39)
+
+    def test_forward_shape_rate_coded(self):
+        """Forward with rate_coded encoding: (4, 21, 39) -> (4, 39)."""
+        model = SpikeGRU(
+            _make_gru_config(encoding="rate_coded", timesteps=5)
+        )
+        x = _binary_input(batch=4, window=21)
+        out = model(x)
+        assert out.shape == (4, 39)
+
+    def test_forward_shape_multi_layer(self):
+        """Forward with 2 layers: (4, 21, 39) -> (4, 39)."""
+        model = SpikeGRU(_make_gru_config(num_layers=2))
+        x = _binary_input(batch=4, window=21)
+        out = model(x)
+        assert out.shape == (4, 39)
+
+    def test_forward_shape_multi_layer_rate_coded(self):
+        """Forward with 2 layers + rate_coded: (4, 21, 39) -> (4, 39)."""
+        model = SpikeGRU(
+            _make_gru_config(
+                num_layers=2, encoding="rate_coded", timesteps=3
+            )
+        )
+        x = _binary_input(batch=4, window=21)
+        out = model(x)
+        assert out.shape == (4, 39)
+
+    def test_forward_shape_small_hidden(self):
+        """Forward with small hidden_size=32: (4, 21, 39) -> (4, 39)."""
+        model = SpikeGRU(_make_gru_config(hidden_size=32))
+        x = _binary_input(batch=4, window=21)
+        out = model(x)
+        assert out.shape == (4, 39)
+
+    def test_forward_shape_large_hidden(self):
+        """Forward with large hidden_size=256: (4, 21, 39) -> (4, 39)."""
+        model = SpikeGRU(_make_gru_config(hidden_size=256))
+        x = _binary_input(batch=4, window=21)
+        out = model(x)
+        assert out.shape == (4, 39)
+
+    def test_forward_output_dtype(self):
+        """Output dtype is float32."""
+        model = SpikeGRU(_make_gru_config())
+        x = _binary_input()
+        out = model(x)
+        assert out.dtype == torch.float32
+
+    def test_forward_all_zeros(self):
+        """All-zeros input produces valid output."""
+        model = SpikeGRU(_make_gru_config())
+        x = torch.zeros(4, 21, 39)
+        out = model(x)
+        assert out.shape == (4, 39)
+        assert torch.isfinite(out).all()
+
+    def test_forward_all_ones(self):
+        """All-ones input produces valid output."""
+        model = SpikeGRU(_make_gru_config())
+        x = torch.ones(4, 21, 39)
+        out = model(x)
+        assert out.shape == (4, 39)
+        assert torch.isfinite(out).all()
+
+
+# ---------------------------------------------------------------------------
+# SpikeGRU — Backward pass
+# ---------------------------------------------------------------------------
+
+
+class TestSpikeGRUBackward:
+    """Verify backward pass through surrogate gradients."""
+
+    def test_backward_completes(self):
+        """Backward pass completes without error."""
+        model = SpikeGRU(_make_gru_config())
+        x = _binary_input()
+        out = model(x)
+        loss = out.sum()
+        loss.backward()
+
+    def test_backward_with_bce_loss(self):
+        """Backward with BCEWithLogitsLoss."""
+        model = SpikeGRU(_make_gru_config())
+        x = _binary_input()
+        target = (torch.rand(4, 39) > 0.5).float()
+        out = model(x)
+        loss = torch.nn.functional.binary_cross_entropy_with_logits(
+            out, target
+        )
+        loss.backward()
+
+    def test_gradients_exist(self):
+        """Input projection and readout have gradients after backward."""
+        model = SpikeGRU(_make_gru_config())
+        x = _binary_input()
+        out = model(x)
+        loss = out.sum()
+        loss.backward()
+        assert model.fc_input.weight.grad is not None
+        assert model.fc_input.weight.grad.abs().sum() > 0
+        assert model.readout.weight.grad is not None
+
+    def test_backward_rate_coded(self):
+        """Backward completes with rate_coded encoding."""
+        model = SpikeGRU(
+            _make_gru_config(encoding="rate_coded", timesteps=3)
+        )
+        x = _binary_input()
+        out = model(x)
+        loss = out.sum()
+        loss.backward()
+
+    def test_backward_multi_layer(self):
+        """Backward completes with multi-layer model."""
+        model = SpikeGRU(_make_gru_config(num_layers=2, dropout=0.1))
+        x = _binary_input()
+        out = model(x)
+        loss = out.sum()
+        loss.backward()
+
+
+# ---------------------------------------------------------------------------
+# SpikeGRU — Learnable parameters
+# ---------------------------------------------------------------------------
+
+
+class TestSpikeGRUParameters:
+    """Verify SpikeGRU has learnable parameters."""
+
+    def test_has_parameters(self):
+        """Model has learnable parameters."""
+        model = SpikeGRU(_make_gru_config())
+        params = list(model.parameters())
+        assert len(params) > 0
+
+    def test_parameters_require_grad(self):
+        """All parameters require gradient."""
+        model = SpikeGRU(_make_gru_config())
+        for param in model.parameters():
+            assert param.requires_grad
+
+    def test_parameter_count_includes_recurrent(self):
+        """Parameter count includes recurrent weights from RLeaky."""
+        model = SpikeGRU(_make_gru_config(hidden_size=64))
+        total_params = sum(p.numel() for p in model.parameters())
+        # fc_input: 39*64 + 64 = 2560
+        # RLeaky recurrent: 64*64 = 4096 (V matrix, all_to_all)
+        # readout: 64*39 + 39 = 2535
+        # Total minimum: 2560 + 4096 + 2535 = 9191
+        assert total_params >= 9000
+
+
+# ---------------------------------------------------------------------------
+# SpikeGRU — Membrane potential reset
+# ---------------------------------------------------------------------------
+
+
+class TestSpikeGRUMembraneReset:
+    """Verify membrane potentials are reset each forward call."""
+
+    def test_consecutive_forwards_independent(self):
+        """Two consecutive forward passes produce the same output."""
+        model = SpikeGRU(_make_gru_config())
+        model.eval()
+        x = _binary_input()
+
+        with torch.no_grad():
+            out1 = model(x)
+            out2 = model(x)
+
+        torch.testing.assert_close(out1, out2)
+
+    def test_different_inputs_different_outputs(self):
+        """Different inputs produce different outputs."""
+        model = SpikeGRU(_make_gru_config())
+        model.eval()
+        x1 = torch.zeros(4, 21, 39)
+        x2 = _binary_input(batch=4, window=21)
+
+        with torch.no_grad():
+            out1 = model(x1)
+            out2 = model(x2)
+
+        assert not torch.equal(out1, out2)
+
+
+# ---------------------------------------------------------------------------
+# SpikeGRU — Model registry
+# ---------------------------------------------------------------------------
+
+
+class TestSpikeGRURegistry:
+    """Verify SpikeGRU is registered in MODEL_REGISTRY."""
+
+    def test_registered(self):
+        """'spike_gru' is in MODEL_REGISTRY."""
+        assert "spike_gru" in MODEL_REGISTRY
+
+    def test_registry_class(self):
+        """Registry entry is SpikeGRU class."""
+        assert MODEL_REGISTRY["spike_gru"] is SpikeGRU
+
+    def test_get_model_creates_instance(self):
+        """get_model with spike_gru config creates SpikeGRU."""
+        config = _make_gru_config()
+        model = get_model(config)
+        assert isinstance(model, SpikeGRU)
+
+    def test_get_model_custom_config(self):
+        """get_model passes config to SpikeGRU."""
+        config = _make_gru_config(hidden_size=256)
+        model = get_model(config)
+        assert model.hidden_size == 256
+
+    def test_exported_from_models(self):
+        """SpikeGRU is accessible from c5_snn.models."""
+        from c5_snn.models import SpikeGRU as Gru
+
+        assert Gru is SpikeGRU
+
+
+# ---------------------------------------------------------------------------
+# SpikeGRU — Config file loading
+# ---------------------------------------------------------------------------
+
+
+class TestSpikeGRUConfigFile:
+    """Verify config file can create SpikeGRU."""
+
+    def test_load_snn_phase_b_config(self):
+        """Load configs/snn_phase_b.yaml and create model."""
+        import yaml
+
+        with open("configs/snn_phase_b.yaml") as f:
+            config = yaml.safe_load(f)
+
+        model = get_model(config)
+        assert isinstance(model, SpikeGRU)
+        assert model.hidden_size == 128
+        assert model.num_layers == 1
+
+    def test_config_forward_shape(self):
+        """Model from config produces correct output shape."""
+        import yaml
+
+        with open("configs/snn_phase_b.yaml") as f:
             config = yaml.safe_load(f)
 
         model = get_model(config)
