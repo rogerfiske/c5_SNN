@@ -436,3 +436,324 @@ class TestCompareCLI:
             cli, ["compare", "--config", str(config_path)]
         )
         assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# Integration test: phase-a CLI (STORY-4.4)
+# ---------------------------------------------------------------------------
+
+
+class TestPhaseACLI:
+    """Integration tests for the phase-a CLI command."""
+
+    def _create_test_csv(self, path: Path, n_rows: int = 50) -> None:
+        """Create a minimal valid CSV for testing."""
+        import pandas as pd
+
+        dates = pd.date_range("2020-01-01", periods=n_rows, freq="D")
+        data = {"date": dates.strftime("%Y-%m-%d")}
+        for i in range(1, 6):
+            data[f"m_{i}"] = [f"M{i}"] * n_rows
+        for i in range(1, 40):
+            data[f"P_{i}"] = [1 if i <= 5 else 0] * n_rows
+        df = pd.DataFrame(data)
+        df.to_csv(path, index=False)
+
+    def test_phase_a_command_exists(self):
+        """phase-a command is registered and shows help."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["phase-a", "--help"])
+        assert result.exit_code == 0
+        assert "Train Phase A SNN models" in result.output
+
+    def test_phase_a_seeds_option(self):
+        """phase-a --help shows --seeds option."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["phase-a", "--help"])
+        assert "--seeds" in result.output
+        assert "42,123,7" in result.output
+
+    def test_phase_a_output_option(self):
+        """phase-a --help shows --output option."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["phase-a", "--help"])
+        assert "--output" in result.output
+        assert "phase_a_comparison.json" in result.output
+
+    def test_phase_a_produces_output(self, tmp_path, monkeypatch):
+        """phase-a trains all models and produces comparison JSON."""
+        csv_path = tmp_path / "test_data.csv"
+        self._create_test_csv(csv_path, n_rows=50)
+
+        output_json = tmp_path / "comparison.json"
+
+        # Monkey-patch the hardcoded data path and training params
+        # to use test data with tiny models and few epochs.
+        import c5_snn.cli as cli_module
+
+        original_phase_a = cli_module.phase_a.callback
+
+        def patched_phase_a(seeds, output_path):
+            """Wrapper that patches data path for testing."""
+
+            from c5_snn.data.dataset import get_dataloaders
+            from c5_snn.data.loader import load_csv
+            from c5_snn.data.splits import create_splits
+            from c5_snn.data.windowing import build_windows
+            from c5_snn.models.base import get_model
+            from c5_snn.models.baselines import FrequencyBaseline
+            from c5_snn.training.compare import (
+                build_comparison,
+                format_comparison_table,
+                save_comparison,
+            )
+            from c5_snn.training.evaluate import evaluate_model
+            from c5_snn.training.trainer import Trainer
+            from c5_snn.utils.device import get_device
+            from c5_snn.utils.logging import setup_logging
+            from c5_snn.utils.seed import set_global_seed
+
+            setup_logging("WARNING")
+
+            seed_list = [int(s.strip()) for s in seeds.split(",")]
+            raw_path = str(csv_path)
+            window_size = 7
+            split_ratios = (0.70, 0.15, 0.15)
+            batch_size = 8
+
+            df = load_csv(raw_path)
+            X, y = build_windows(df, window_size)
+            split_info = create_splits(
+                n_samples=X.shape[0],
+                ratios=split_ratios,
+                window_size=window_size,
+                dates=df["date"] if "date" in df.columns else None,
+            )
+            dataloaders = get_dataloaders(split_info, X, y, batch_size)
+            test_loader = dataloaders["test"]
+            test_split_size = len(test_loader.dataset)
+            device = get_device()
+
+            model_results = []
+
+            # FrequencyBaseline
+            freq_model = FrequencyBaseline(
+                {"model": {"type": "frequency_baseline"}}
+            )
+            freq_eval = evaluate_model(freq_model, test_loader, device)
+            model_results.append({
+                "name": "frequency_baseline",
+                "type": "heuristic",
+                "phase": "baseline",
+                "seed_metrics": [freq_eval["metrics"]],
+                "training_time_s": 0,
+                "environment": "local",
+            })
+
+            # GRU (tiny, 2 epochs)
+            gru_seed_metrics = []
+            for seed in seed_list:
+                set_global_seed(seed)
+                gru_cfg = {
+                    "experiment": {"name": f"gru_seed{seed}", "seed": seed},
+                    "data": {
+                        "raw_path": raw_path,
+                        "window_size": window_size,
+                        "split_ratios": list(split_ratios),
+                        "batch_size": batch_size,
+                    },
+                    "model": {
+                        "type": "gru_baseline",
+                        "hidden_size": 16,
+                        "num_layers": 1,
+                    },
+                    "training": {
+                        "epochs": 2,
+                        "learning_rate": 0.001,
+                        "early_stopping_patience": 10,
+                    },
+                    "output": {
+                        "dir": str(tmp_path / f"gru_seed{seed}"),
+                    },
+                    "log_level": "WARNING",
+                }
+                gru_model = get_model(gru_cfg)
+                trainer = Trainer(gru_model, gru_cfg, dataloaders, device)
+                trainer.run()
+                gru_eval = evaluate_model(gru_model, test_loader, device)
+                gru_seed_metrics.append(gru_eval["metrics"])
+
+            model_results.append({
+                "name": "gru_baseline",
+                "type": "learned",
+                "phase": "baseline",
+                "seed_metrics": gru_seed_metrics,
+                "training_time_s": 0,
+                "environment": "local",
+            })
+
+            # SpikingMLP (tiny, 2 epochs)
+            mlp_seed_metrics = []
+            for seed in seed_list:
+                set_global_seed(seed)
+                mlp_cfg = {
+                    "experiment": {
+                        "name": f"spiking_mlp_seed{seed}",
+                        "seed": seed,
+                    },
+                    "data": {
+                        "raw_path": raw_path,
+                        "window_size": window_size,
+                        "split_ratios": list(split_ratios),
+                        "batch_size": batch_size,
+                    },
+                    "model": {
+                        "type": "spiking_mlp",
+                        "encoding": "direct",
+                        "timesteps": 10,
+                        "hidden_sizes": [32],
+                        "beta": 0.95,
+                    },
+                    "training": {
+                        "epochs": 2,
+                        "learning_rate": 0.001,
+                        "early_stopping_patience": 10,
+                    },
+                    "output": {
+                        "dir": str(tmp_path / f"mlp_seed{seed}"),
+                    },
+                    "log_level": "WARNING",
+                }
+                mlp_model = get_model(mlp_cfg)
+                trainer = Trainer(mlp_model, mlp_cfg, dataloaders, device)
+                trainer.run()
+                mlp_eval = evaluate_model(mlp_model, test_loader, device)
+                mlp_seed_metrics.append(mlp_eval["metrics"])
+
+            model_results.append({
+                "name": "spiking_mlp",
+                "type": "learned",
+                "phase": "phase_a",
+                "seed_metrics": mlp_seed_metrics,
+                "training_time_s": 0,
+                "environment": "local",
+            })
+
+            # SpikingCNN1D (tiny, 2 epochs)
+            cnn_seed_metrics = []
+            for seed in seed_list:
+                set_global_seed(seed)
+                cnn_cfg = {
+                    "experiment": {
+                        "name": f"spiking_cnn1d_seed{seed}",
+                        "seed": seed,
+                    },
+                    "data": {
+                        "raw_path": raw_path,
+                        "window_size": window_size,
+                        "split_ratios": list(split_ratios),
+                        "batch_size": batch_size,
+                    },
+                    "model": {
+                        "type": "spiking_cnn1d",
+                        "encoding": "direct",
+                        "timesteps": 10,
+                        "channels": [16],
+                        "kernel_sizes": [3],
+                        "beta": 0.95,
+                    },
+                    "training": {
+                        "epochs": 2,
+                        "learning_rate": 0.001,
+                        "early_stopping_patience": 10,
+                    },
+                    "output": {
+                        "dir": str(tmp_path / f"cnn_seed{seed}"),
+                    },
+                    "log_level": "WARNING",
+                }
+                cnn_model = get_model(cnn_cfg)
+                trainer = Trainer(cnn_model, cnn_cfg, dataloaders, device)
+                trainer.run()
+                cnn_eval = evaluate_model(cnn_model, test_loader, device)
+                cnn_seed_metrics.append(cnn_eval["metrics"])
+
+            model_results.append({
+                "name": "spiking_cnn1d",
+                "type": "learned",
+                "phase": "phase_a",
+                "seed_metrics": cnn_seed_metrics,
+                "training_time_s": 0,
+                "environment": "local",
+            })
+
+            report = build_comparison(
+                model_results, window_size, test_split_size
+            )
+            save_comparison(report, output_path)
+            import click as _click
+
+            _click.echo(format_comparison_table(report))
+            _click.echo(f"Results saved to: {output_path}")
+
+        # Replace the callback temporarily
+        cli_module.phase_a.callback = patched_phase_a
+        try:
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                [
+                    "phase-a",
+                    "--seeds", "42,7",
+                    "--output", str(output_json),
+                ],
+            )
+        finally:
+            cli_module.phase_a.callback = original_phase_a
+
+        assert result.exit_code == 0, (
+            f"CLI failed:\n{result.output}\n{result.exception}"
+        )
+        assert "frequency_baseline" in result.output
+        assert "gru_baseline" in result.output
+        assert "spiking_mlp" in result.output
+        assert "spiking_cnn1d" in result.output
+
+        # Verify JSON output
+        assert output_json.exists()
+        with open(output_json) as f:
+            report = json.load(f)
+        assert len(report["models"]) == 4
+        names = [m["name"] for m in report["models"]]
+        assert "frequency_baseline" in names
+        assert "gru_baseline" in names
+        assert "spiking_mlp" in names
+        assert "spiking_cnn1d" in names
+
+        # Verify phase fields
+        phases = {m["name"]: m["phase"] for m in report["models"]}
+        assert phases["frequency_baseline"] == "baseline"
+        assert phases["gru_baseline"] == "baseline"
+        assert phases["spiking_mlp"] == "phase_a"
+        assert phases["spiking_cnn1d"] == "phase_a"
+
+        # Verify seed counts
+        seeds_map = {m["name"]: m["n_seeds"] for m in report["models"]}
+        assert seeds_map["frequency_baseline"] == 1
+        assert seeds_map["gru_baseline"] == 2
+        assert seeds_map["spiking_mlp"] == 2
+        assert seeds_map["spiking_cnn1d"] == 2
+
+        # Verify metrics exist
+        for model in report["models"]:
+            assert "recall_at_20" in model["metrics_mean"]
+            assert "hit_at_20" in model["metrics_mean"]
+            assert "mrr" in model["metrics_mean"]
+
+    def test_phase_a_invalid_seeds(self):
+        """phase-a with non-integer seeds exits non-zero."""
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["phase-a", "--seeds", "abc,def"]
+        )
+        assert result.exit_code != 0

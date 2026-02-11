@@ -317,6 +317,247 @@ def compare(config_path: str, seeds: str, output_path: str) -> None:
     click.echo()
 
 
+@cli.command("phase-a")
+@click.option(
+    "--seeds",
+    default="42,123,7",
+    help="Comma-separated seeds for multi-seed training.",
+    show_default=True,
+)
+@click.option(
+    "--output",
+    "output_path",
+    default="results/phase_a_comparison.json",
+    help="Path for comparison JSON output.",
+    show_default=True,
+)
+def phase_a(seeds: str, output_path: str) -> None:
+    """Train Phase A SNN models and compare against baselines."""
+    import copy
+    import time
+
+    from c5_snn.data.dataset import get_dataloaders
+    from c5_snn.data.loader import load_csv
+    from c5_snn.data.splits import create_splits
+    from c5_snn.data.windowing import build_windows
+    from c5_snn.models.base import get_model
+    from c5_snn.models.baselines import FrequencyBaseline
+    from c5_snn.training.compare import (
+        build_comparison,
+        format_comparison_table,
+        save_comparison,
+    )
+    from c5_snn.training.evaluate import evaluate_model
+    from c5_snn.training.trainer import Trainer
+    from c5_snn.utils.device import get_device
+    from c5_snn.utils.seed import set_global_seed
+
+    setup_logging("INFO")
+
+    # 1. Parse seeds
+    try:
+        seed_list = [int(s.strip()) for s in seeds.split(",")]
+    except ValueError:
+        click.echo("ERROR: Seeds must be comma-separated integers", err=True)
+        sys.exit(1)
+
+    # 2. Standard data pipeline parameters
+    raw_path = "data/raw/CA5_matrix_binary.csv"
+    window_size = 21
+    split_ratios = (0.70, 0.15, 0.15)
+    batch_size = 64
+
+    # 3. Load data and build pipeline (shared across all models)
+    try:
+        df = load_csv(raw_path)
+    except (DataValidationError, FileNotFoundError) as e:
+        click.echo(f"ERROR: Failed to load data: {e}", err=True)
+        sys.exit(1)
+
+    try:
+        X, y = build_windows(df, window_size)
+    except (ConfigError, DataValidationError) as e:
+        click.echo(f"ERROR: {e}", err=True)
+        sys.exit(1)
+
+    split_info = create_splits(
+        n_samples=X.shape[0],
+        ratios=split_ratios,
+        window_size=window_size,
+        dates=df["date"] if "date" in df.columns else None,
+    )
+
+    dataloaders = get_dataloaders(split_info, X, y, batch_size)
+    test_loader = dataloaders["test"]
+    test_split_size = len(test_loader.dataset)
+    device = get_device()
+
+    model_results = []
+
+    # 4. FrequencyBaseline (deterministic, 1 run)
+    click.echo("Evaluating FrequencyBaseline...")
+    freq_config = {"model": {"type": "frequency_baseline"}}
+    freq_model = FrequencyBaseline(freq_config)
+    freq_eval = evaluate_model(freq_model, test_loader, device)
+    model_results.append({
+        "name": "frequency_baseline",
+        "type": "heuristic",
+        "phase": "baseline",
+        "seed_metrics": [freq_eval["metrics"]],
+        "training_time_s": 0,
+        "environment": "local",
+    })
+    click.echo(
+        f"  FrequencyBaseline recall@20: "
+        f"{freq_eval['metrics']['recall_at_20']:.4f}"
+    )
+
+    # 5. GRU baseline (multi-seed)
+    gru_seed_metrics = []
+    total_gru_time = 0.0
+    gru_config_base = {
+        "experiment": {"name": "gru_baseline", "seed": 42},
+        "data": {
+            "raw_path": raw_path,
+            "window_size": window_size,
+            "split_ratios": list(split_ratios),
+            "batch_size": batch_size,
+        },
+        "model": {
+            "type": "gru_baseline",
+            "hidden_size": 128,
+            "num_layers": 1,
+            "dropout": 0.0,
+        },
+        "training": {
+            "epochs": 100,
+            "learning_rate": 0.001,
+            "optimizer": "adam",
+            "early_stopping_patience": 10,
+            "early_stopping_metric": "val_recall_at_20",
+        },
+        "output": {"dir": "results/baseline_gru"},
+        "log_level": "INFO",
+    }
+
+    for seed in seed_list:
+        click.echo(f"Training GRU baseline (seed={seed})...")
+        set_global_seed(seed)
+
+        seed_config = copy.deepcopy(gru_config_base)
+        seed_config["experiment"]["seed"] = seed
+        seed_config["output"]["dir"] = f"results/baseline_gru_seed{seed}"
+
+        gru_model = get_model(seed_config)
+        trainer = Trainer(gru_model, seed_config, dataloaders, device)
+
+        t0 = time.time()
+        trainer.run()
+        elapsed = time.time() - t0
+        total_gru_time += elapsed
+
+        gru_eval = evaluate_model(gru_model, test_loader, device)
+        gru_seed_metrics.append(gru_eval["metrics"])
+        click.echo(
+            f"  Seed {seed}: recall@20={gru_eval['metrics']['recall_at_20']:.4f}"
+            f" ({elapsed:.1f}s)"
+        )
+
+    model_results.append({
+        "name": "gru_baseline",
+        "type": "learned",
+        "phase": "baseline",
+        "seed_metrics": gru_seed_metrics,
+        "training_time_s": round(total_gru_time, 1),
+        "environment": "local",
+    })
+
+    # 6. SNN Phase A models (multi-seed each)
+    snn_models = {
+        "spiking_mlp": {
+            "encoding": "direct",
+            "timesteps": 10,
+            "hidden_sizes": [256, 128],
+            "beta": 0.95,
+            "surrogate": "fast_sigmoid",
+        },
+        "spiking_cnn1d": {
+            "encoding": "direct",
+            "timesteps": 10,
+            "channels": [64, 64],
+            "kernel_sizes": [3, 3],
+            "beta": 0.95,
+            "surrogate": "fast_sigmoid",
+        },
+    }
+
+    for model_type, model_params in snn_models.items():
+        click.echo(f"\nTraining {model_type}...")
+        snn_seed_metrics = []
+        total_snn_time = 0.0
+
+        for seed in seed_list:
+            click.echo(f"  Training {model_type} (seed={seed})...")
+            set_global_seed(seed)
+
+            snn_config = {
+                "experiment": {
+                    "name": f"{model_type}_seed{seed}",
+                    "seed": seed,
+                },
+                "data": {
+                    "raw_path": raw_path,
+                    "window_size": window_size,
+                    "split_ratios": list(split_ratios),
+                    "batch_size": batch_size,
+                },
+                "model": {"type": model_type, **model_params},
+                "training": {
+                    "epochs": 100,
+                    "learning_rate": 0.001,
+                    "optimizer": "adam",
+                    "early_stopping_patience": 10,
+                    "early_stopping_metric": "val_recall_at_20",
+                },
+                "output": {"dir": f"results/{model_type}_seed{seed}"},
+                "log_level": "INFO",
+            }
+
+            snn_model = get_model(snn_config)
+            trainer = Trainer(snn_model, snn_config, dataloaders, device)
+
+            t0 = time.time()
+            trainer.run()
+            elapsed = time.time() - t0
+            total_snn_time += elapsed
+
+            snn_eval = evaluate_model(snn_model, test_loader, device)
+            snn_seed_metrics.append(snn_eval["metrics"])
+            click.echo(
+                f"    recall@20={snn_eval['metrics']['recall_at_20']:.4f}"
+                f" ({elapsed:.1f}s)"
+            )
+
+        model_results.append({
+            "name": model_type,
+            "type": "learned",
+            "phase": "phase_a",
+            "seed_metrics": snn_seed_metrics,
+            "training_time_s": round(total_snn_time, 1),
+            "environment": "local",
+        })
+
+    # 7. Build and save comparison report
+    report = build_comparison(model_results, window_size, test_split_size)
+    save_comparison(report, output_path)
+
+    # 8. Print formatted table
+    click.echo()
+    click.echo(format_comparison_table(report))
+    click.echo(f"Results saved to: {output_path}")
+    click.echo()
+
+
 @cli.command("evaluate")
 @click.option(
     "--checkpoint",

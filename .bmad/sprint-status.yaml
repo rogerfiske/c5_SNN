@@ -147,8 +147,9 @@ sprints:
       - story_id: "STORY-4.4"
         title: "Phase A Training & Comparison"
         points: 3
-        status: "not_started"
+        status: "defined"
         assigned_to: null
+        story_doc: "docs/stories/STORY-4.4.md"
 
   - sprint_number: 5
     start_date: "2026-03-10"
