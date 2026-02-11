@@ -81,8 +81,8 @@ sprints:
     end_date: "2026-03-02"
     capacity_points: 20
     committed_points: 19
-    completed_points: 16
-    status: "in_progress"
+    completed_points: 19
+    status: "completed"
     goal: "Baselines trained with first real benchmark numbers"
     stories:
       - story_id: "STORY-3.1"
@@ -109,8 +109,10 @@ sprints:
       - story_id: "STORY-3.4"
         title: "Baseline Results & Comparison"
         points: 3
-        status: "not_started"
-        assigned_to: null
+        status: "completed"
+        assigned_to: "ai_dev_agent"
+        completion_date: "2026-02-11"
+        story_doc: "docs/stories/STORY-3.4.md"
 
   - sprint_number: 4
     start_date: "2026-03-03"
@@ -215,7 +217,7 @@ sprints:
 velocity:
   sprint_1: 13
   sprint_2: 16
-  sprint_3: null
+  sprint_3: 19
   sprint_4: null
   sprint_5: null
   sprint_6: null

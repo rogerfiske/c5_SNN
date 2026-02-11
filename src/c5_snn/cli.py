@@ -159,6 +159,164 @@ def train(config_path: str) -> None:
     click.echo()
 
 
+@cli.command("compare")
+@click.option(
+    "--config",
+    "config_path",
+    required=True,
+    help="Path to experiment config YAML (used for data + GRU model).",
+)
+@click.option(
+    "--seeds",
+    default="42,123,7",
+    help="Comma-separated seeds for multi-seed GRU training.",
+    show_default=True,
+)
+@click.option(
+    "--output",
+    "output_path",
+    default="results/baseline_comparison.json",
+    help="Path for comparison JSON output.",
+    show_default=True,
+)
+def compare(config_path: str, seeds: str, output_path: str) -> None:
+    """Train with multiple seeds, evaluate, and compare baselines."""
+    import copy
+    import time
+
+    from c5_snn.data.dataset import get_dataloaders
+    from c5_snn.data.loader import load_csv
+    from c5_snn.data.splits import create_splits
+    from c5_snn.data.windowing import build_windows
+    from c5_snn.models.baselines import FrequencyBaseline, GRUBaseline
+    from c5_snn.training.compare import (
+        build_comparison,
+        format_comparison_table,
+        save_comparison,
+    )
+    from c5_snn.training.evaluate import evaluate_model
+    from c5_snn.training.trainer import Trainer
+    from c5_snn.utils.config import load_config
+    from c5_snn.utils.device import get_device
+    from c5_snn.utils.seed import set_global_seed
+
+    # 1. Load config
+    try:
+        config = load_config(config_path)
+    except ConfigError as e:
+        click.echo(f"ERROR: {e}", err=True)
+        sys.exit(1)
+
+    log_level = config.get("log_level", "INFO")
+    setup_logging(log_level)
+
+    # 2. Parse seeds
+    try:
+        seed_list = [int(s.strip()) for s in seeds.split(",")]
+    except ValueError:
+        click.echo("ERROR: Seeds must be comma-separated integers", err=True)
+        sys.exit(1)
+
+    # 3. Load data and build pipeline
+    data_cfg = config.get("data", {})
+    raw_path = data_cfg.get("raw_path", "data/raw/CA5_matrix_binary.csv")
+
+    try:
+        df = load_csv(raw_path)
+    except (DataValidationError, FileNotFoundError) as e:
+        click.echo(f"ERROR: Failed to load data: {e}", err=True)
+        sys.exit(1)
+
+    window_size = int(data_cfg.get("window_size", 21))
+    try:
+        X, y = build_windows(df, window_size)
+    except (ConfigError, DataValidationError) as e:
+        click.echo(f"ERROR: {e}", err=True)
+        sys.exit(1)
+
+    ratios = data_cfg.get("split_ratios", [0.70, 0.15, 0.15])
+    split_info = create_splits(
+        n_samples=X.shape[0],
+        ratios=tuple(ratios),
+        window_size=window_size,
+        dates=df["date"] if "date" in df.columns else None,
+    )
+
+    batch_size = int(data_cfg.get("batch_size", 64))
+    dataloaders = get_dataloaders(split_info, X, y, batch_size)
+    test_loader = dataloaders["test"]
+    test_split_size = len(test_loader.dataset)
+    device = get_device()
+
+    model_results = []
+
+    # 4. Evaluate FrequencyBaseline (deterministic, 1 run)
+    click.echo("Evaluating FrequencyBaseline...")
+    freq_config = {"model": {"type": "frequency_baseline"}}
+    freq_model = FrequencyBaseline(freq_config)
+    freq_eval = evaluate_model(freq_model, test_loader, device)
+    model_results.append({
+        "name": "frequency_baseline",
+        "type": "heuristic",
+        "phase": "baseline",
+        "seed_metrics": [freq_eval["metrics"]],
+        "training_time_s": 0,
+        "environment": "local",
+    })
+    click.echo(
+        f"  FrequencyBaseline recall@20: "
+        f"{freq_eval['metrics']['recall_at_20']:.4f}"
+    )
+
+    # 5. Train + evaluate GRU with multiple seeds
+    gru_seed_metrics = []
+    total_gru_time = 0.0
+
+    for seed in seed_list:
+        click.echo(f"Training GRU baseline (seed={seed})...")
+        set_global_seed(seed)
+
+        seed_config = copy.deepcopy(config)
+        seed_config["experiment"]["seed"] = seed
+        seed_config["output"] = {
+            "dir": f"results/baseline_gru_seed{seed}"
+        }
+
+        gru_model = GRUBaseline(seed_config)
+        trainer = Trainer(gru_model, seed_config, dataloaders, device)
+
+        t0 = time.time()
+        trainer.run()
+        elapsed = time.time() - t0
+        total_gru_time += elapsed
+
+        gru_eval = evaluate_model(gru_model, test_loader, device)
+        gru_seed_metrics.append(gru_eval["metrics"])
+        click.echo(
+            f"  Seed {seed}: recall@20={gru_eval['metrics']['recall_at_20']:.4f}"
+            f" ({elapsed:.1f}s)"
+        )
+
+    model_results.append({
+        "name": "gru_baseline",
+        "type": "learned",
+        "phase": "baseline",
+        "seed_metrics": gru_seed_metrics,
+        "training_time_s": round(total_gru_time, 1),
+        "environment": "local",
+    })
+
+    # 6. Build and save comparison report
+    report = build_comparison(model_results, window_size, test_split_size)
+    save_comparison(report, output_path)
+
+    # 7. Print formatted table
+    click.echo()
+    click.echo(format_comparison_table(report))
+    click.echo(f"Results saved to: {output_path}")
+    click.echo()
+
+
 @cli.command("evaluate")
 @click.option(
     "--checkpoint",
