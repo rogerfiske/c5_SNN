@@ -44,8 +44,8 @@ sprints:
     end_date: "2026-02-23"
     capacity_points: 20
     committed_points: 16
-    completed_points: 13
-    status: "in_progress"
+    completed_points: 16
+    status: "completed"
     goal: "Complete data pipeline and evaluation harness"
     stories:
       - story_id: "STORY-2.1"
@@ -72,8 +72,9 @@ sprints:
       - story_id: "STORY-2.4"
         title: "CLI evaluate Command"
         points: 3
-        status: "not_started"
-        assigned_to: null
+        status: "completed"
+        assigned_to: "ai_dev_agent"
+        completion_date: "2026-02-11"
 
   - sprint_number: 3
     start_date: "2026-02-24"
@@ -207,7 +208,7 @@ sprints:
 
 velocity:
   sprint_1: 13
-  sprint_2: null
+  sprint_2: 16
   sprint_3: null
   sprint_4: null
   sprint_5: null
