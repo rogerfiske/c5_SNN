@@ -72,6 +72,93 @@ def validate_data(data_path: str) -> None:
         sys.exit(1)
 
 
+@cli.command("train")
+@click.option(
+    "--config",
+    "config_path",
+    required=True,
+    help="Path to experiment config YAML.",
+)
+def train(config_path: str) -> None:
+    """Train a model from a YAML experiment config."""
+    from c5_snn.data.dataset import get_dataloaders
+    from c5_snn.data.loader import load_csv
+    from c5_snn.data.splits import create_splits
+    from c5_snn.data.windowing import build_windows
+    from c5_snn.models.base import get_model
+    from c5_snn.training.trainer import Trainer
+    from c5_snn.utils.config import load_config
+    from c5_snn.utils.device import get_device
+    from c5_snn.utils.seed import set_global_seed
+
+    # 1. Load and validate config
+    try:
+        config = load_config(config_path)
+    except ConfigError as e:
+        click.echo(f"ERROR: {e}", err=True)
+        sys.exit(1)
+
+    log_level = config.get("log_level", "INFO")
+    setup_logging(log_level)
+
+    # 2. Set global seed
+    seed = config.get("experiment", {}).get("seed", 42)
+    set_global_seed(seed)
+
+    # 3. Load data
+    data_cfg = config.get("data", {})
+    raw_path = data_cfg.get("raw_path", "data/raw/CA5_matrix_binary.csv")
+
+    try:
+        df = load_csv(raw_path)
+    except (DataValidationError, FileNotFoundError) as e:
+        click.echo(f"ERROR: Failed to load data: {e}", err=True)
+        sys.exit(1)
+
+    # 4. Build windowed tensors
+    window_size = int(data_cfg.get("window_size", 21))
+    try:
+        X, y = build_windows(df, window_size)
+    except (ConfigError, DataValidationError) as e:
+        click.echo(f"ERROR: {e}", err=True)
+        sys.exit(1)
+
+    # 5. Create splits and dataloaders
+    ratios = data_cfg.get("split_ratios", [0.70, 0.15, 0.15])
+    split_info = create_splits(
+        n_samples=X.shape[0],
+        ratios=tuple(ratios),
+        window_size=window_size,
+        dates=df["date"] if "date" in df.columns else None,
+    )
+
+    batch_size = int(data_cfg.get("batch_size", 64))
+    dataloaders = get_dataloaders(split_info, X, y, batch_size)
+
+    # 6. Instantiate model via registry
+    try:
+        model = get_model(config)
+    except ConfigError as e:
+        click.echo(f"ERROR: {e}", err=True)
+        sys.exit(1)
+
+    # 7. Create Trainer and run
+    device = get_device()
+    trainer = Trainer(model, config, dataloaders, device)
+    result = trainer.run()
+
+    # 8. Print final summary
+    click.echo()
+    exp_name = config.get("experiment", {}).get("name", "unknown")
+    click.echo(f"Training Complete: {exp_name}")
+    click.echo("=" * 45)
+    click.echo(f"  Best epoch:          {result['best_epoch']}")
+    click.echo(f"  Total epochs:        {result['total_epochs']}")
+    click.echo(f"  Best val_recall@20:  {result['best_val_recall_at_20']:.4f}")
+    click.echo(f"  Output dir:          {trainer.output_dir}")
+    click.echo()
+
+
 @cli.command("evaluate")
 @click.option(
     "--checkpoint",
