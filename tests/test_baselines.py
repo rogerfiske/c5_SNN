@@ -1,10 +1,10 @@
-"""Tests for BaseModel, MODEL_REGISTRY, and FrequencyBaseline (STORY-3.1)."""
+"""Tests for BaseModel, MODEL_REGISTRY, baselines (STORY-3.1, STORY-3.2)."""
 
 import pytest
 import torch
 
 from c5_snn.models.base import MODEL_REGISTRY, BaseModel, get_model
-from c5_snn.models.baselines import FrequencyBaseline
+from c5_snn.models.baselines import FrequencyBaseline, GRUBaseline
 from c5_snn.utils.exceptions import ConfigError
 
 # ---------------------------------------------------------------------------
@@ -66,10 +66,22 @@ class TestModelRegistry:
         assert "frequency_baseline" in MODEL_REGISTRY
         assert MODEL_REGISTRY["frequency_baseline"] is FrequencyBaseline
 
+    def test_gru_baseline_registered(self):
+        """GRUBaseline is in MODEL_REGISTRY."""
+        assert "gru_baseline" in MODEL_REGISTRY
+        assert MODEL_REGISTRY["gru_baseline"] is GRUBaseline
+
     def test_get_model_returns_correct_type(self):
         """get_model returns FrequencyBaseline for correct config."""
         m = get_model(DEFAULT_CONFIG)
         assert isinstance(m, FrequencyBaseline)
+        assert isinstance(m, BaseModel)
+
+    def test_get_model_returns_gru_baseline(self):
+        """get_model returns GRUBaseline for gru_baseline config."""
+        config = {"model": {"type": "gru_baseline"}}
+        m = get_model(config)
+        assert isinstance(m, GRUBaseline)
         assert isinstance(m, BaseModel)
 
     def test_get_model_unknown_type_raises(self):
@@ -298,3 +310,192 @@ class TestFrequencyBaselineProperties:
         x = torch.rand(2, 7, 39)
         out = model(x)
         assert out.shape == (2, 39)
+
+
+# ---------------------------------------------------------------------------
+# GRUBaseline — fixtures
+# ---------------------------------------------------------------------------
+
+GRU_DEFAULT_CONFIG = {"model": {"type": "gru_baseline"}}
+
+
+@pytest.fixture
+def gru_model():
+    """GRUBaseline with default config."""
+    return GRUBaseline(GRU_DEFAULT_CONFIG)
+
+
+# ---------------------------------------------------------------------------
+# GRUBaseline — output shape
+# ---------------------------------------------------------------------------
+
+
+class TestGRUBaselineShape:
+    """Verify output shapes for various inputs."""
+
+    def test_basic_shape(self, gru_model):
+        """Standard input (4, 21, 39) -> (4, 39)."""
+        x = torch.rand(4, 21, 39)
+        out = gru_model(x)
+        assert out.shape == (4, 39)
+
+    def test_different_window_size(self, gru_model):
+        """Different window size (8, 7, 39) -> (8, 39)."""
+        x = torch.rand(8, 7, 39)
+        out = gru_model(x)
+        assert out.shape == (8, 39)
+
+    def test_single_sample(self, gru_model):
+        """Batch size 1."""
+        x = torch.rand(1, 21, 39)
+        out = gru_model(x)
+        assert out.shape == (1, 39)
+
+    def test_window_size_1(self, gru_model):
+        """Minimal window W=1."""
+        x = torch.rand(2, 1, 39)
+        out = gru_model(x)
+        assert out.shape == (2, 39)
+
+    def test_large_batch(self, gru_model):
+        """Large batch size."""
+        x = torch.rand(128, 7, 39)
+        out = gru_model(x)
+        assert out.shape == (128, 39)
+
+
+# ---------------------------------------------------------------------------
+# GRUBaseline — backward pass
+# ---------------------------------------------------------------------------
+
+
+class TestGRUBaselineBackward:
+    """Verify backward pass and gradient flow."""
+
+    def test_backward_completes(self, gru_model):
+        """loss.backward() completes without error."""
+        x = torch.rand(4, 21, 39)
+        y = torch.zeros(4, 39)
+        y[:, :5] = 1.0  # 5 active parts
+
+        logits = gru_model(x)
+        loss = torch.nn.functional.binary_cross_entropy_with_logits(
+            logits, y
+        )
+        loss.backward()
+
+        # Verify gradients exist on model parameters
+        for param in gru_model.parameters():
+            assert param.grad is not None
+
+    def test_backward_different_batch(self, gru_model):
+        """Backward works with different batch/window sizes."""
+        x = torch.rand(8, 7, 39)
+        y = torch.zeros(8, 39)
+        y[:, 10:15] = 1.0
+
+        logits = gru_model(x)
+        loss = torch.nn.functional.binary_cross_entropy_with_logits(
+            logits, y
+        )
+        loss.backward()
+
+    def test_optimizer_step(self, gru_model):
+        """Full train step: forward -> loss -> backward -> step."""
+        optimizer = torch.optim.Adam(gru_model.parameters(), lr=0.001)
+
+        x = torch.rand(4, 21, 39)
+        y = torch.zeros(4, 39)
+        y[:, :5] = 1.0
+
+        # Capture initial parameter values
+        initial_params = [p.clone() for p in gru_model.parameters()]
+
+        optimizer.zero_grad()
+        logits = gru_model(x)
+        loss = torch.nn.functional.binary_cross_entropy_with_logits(
+            logits, y
+        )
+        loss.backward()
+        optimizer.step()
+
+        # Verify parameters changed
+        changed = False
+        for p_init, p_new in zip(initial_params, gru_model.parameters()):
+            if not torch.equal(p_init, p_new.data):
+                changed = True
+                break
+        assert changed, "Parameters should change after optimizer step"
+
+
+# ---------------------------------------------------------------------------
+# GRUBaseline — properties
+# ---------------------------------------------------------------------------
+
+
+class TestGRUBaselineProperties:
+    """Verify GRUBaseline model properties."""
+
+    def test_has_learnable_parameters(self, gru_model):
+        """Model has learnable parameters."""
+        params = list(gru_model.parameters())
+        assert len(params) > 0
+
+    def test_is_base_model(self, gru_model):
+        """GRUBaseline is a BaseModel."""
+        assert isinstance(gru_model, BaseModel)
+
+    def test_is_nn_module(self, gru_model):
+        """GRUBaseline is an nn.Module."""
+        assert isinstance(gru_model, torch.nn.Module)
+
+    def test_default_hyperparameters(self):
+        """Default config uses expected hyperparameters."""
+        m = GRUBaseline({"model": {}})
+        assert m.hidden_size == 128
+        assert m.num_layers == 1
+        assert m.dropout == 0.0
+
+    def test_custom_hyperparameters(self):
+        """Custom config overrides defaults."""
+        config = {
+            "model": {
+                "hidden_size": 256,
+                "num_layers": 2,
+                "dropout": 0.3,
+            }
+        }
+        m = GRUBaseline(config)
+        assert m.hidden_size == 256
+        assert m.num_layers == 2
+        assert m.dropout == 0.3
+
+    def test_multi_layer_forward(self):
+        """Multi-layer GRU produces correct output shape."""
+        config = {
+            "model": {
+                "hidden_size": 64,
+                "num_layers": 3,
+                "dropout": 0.1,
+            }
+        }
+        m = GRUBaseline(config)
+        x = torch.rand(4, 21, 39)
+        out = m(x)
+        assert out.shape == (4, 39)
+
+    def test_eval_mode_works(self, gru_model):
+        """Model can be set to eval mode."""
+        gru_model.eval()
+        x = torch.rand(2, 7, 39)
+        out = gru_model(x)
+        assert out.shape == (2, 39)
+
+    def test_parameter_count_reasonable(self, gru_model):
+        """Default model has expected number of parameters."""
+        total = sum(p.numel() for p in gru_model.parameters())
+        # GRU(39, 128, 1): 3*(128*39 + 128*128 + 128 + 128) = ~64k
+        # Linear(128, 39): 128*39 + 39 = 5031
+        # Total should be roughly 69k
+        assert total > 50_000
+        assert total < 100_000

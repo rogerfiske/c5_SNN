@@ -1,8 +1,9 @@
-"""Heuristic baseline models for the CA5 task."""
+"""Baseline models for the CA5 task (heuristic + ANN)."""
 
 import logging
 
 import torch
+from torch import nn
 
 from c5_snn.models.base import MODEL_REGISTRY, BaseModel
 
@@ -67,3 +68,55 @@ class FrequencyBaseline(BaseModel):
 
 # Register in model registry
 MODEL_REGISTRY["frequency_baseline"] = FrequencyBaseline
+
+
+class GRUBaseline(BaseModel):
+    """Conventional GRU-based neural network baseline.
+
+    Architecture:
+        nn.GRU encoder -> final hidden state -> nn.Linear -> 39 logits
+
+    This is the first trainable model in the pipeline, providing a strong
+    learned-model benchmark for SNN comparison.
+    """
+
+    def __init__(self, config: dict) -> None:
+        super().__init__()
+        model_cfg = config.get("model", {})
+        self.hidden_size = int(model_cfg.get("hidden_size", 128))
+        self.num_layers = int(model_cfg.get("num_layers", 1))
+        self.dropout = float(model_cfg.get("dropout", 0.0))
+
+        self.gru = nn.GRU(
+            input_size=39,
+            hidden_size=self.hidden_size,
+            num_layers=self.num_layers,
+            dropout=self.dropout if self.num_layers > 1 else 0.0,
+            batch_first=True,
+        )
+        self.fc = nn.Linear(self.hidden_size, 39)
+
+        logger.info(
+            "GRUBaseline: hidden_size=%d, num_layers=%d, dropout=%.2f",
+            self.hidden_size,
+            self.num_layers,
+            self.dropout,
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """GRU encoder -> final hidden -> linear projection.
+
+        Args:
+            x: (batch, W, 39) windowed multi-hot input.
+
+        Returns:
+            (batch, 39) logits for each part.
+        """
+        # x: (batch, W, 39)
+        _output, h_n = self.gru(x)  # h_n: (num_layers, batch, hidden_size)
+        last_hidden = h_n[-1]  # (batch, hidden_size)
+        logits = self.fc(last_hidden)  # (batch, 39)
+        return logits
+
+
+MODEL_REGISTRY["gru_baseline"] = GRUBaseline

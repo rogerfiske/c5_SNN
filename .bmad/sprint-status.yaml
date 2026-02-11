@@ -81,7 +81,7 @@ sprints:
     end_date: "2026-03-02"
     capacity_points: 20
     committed_points: 19
-    completed_points: 3
+    completed_points: 8
     status: "in_progress"
     goal: "Baselines trained with first real benchmark numbers"
     stories:
@@ -95,8 +95,10 @@ sprints:
       - story_id: "STORY-3.2"
         title: "ANN GRU Baseline"
         points: 5
-        status: "not_started"
-        assigned_to: null
+        status: "completed"
+        assigned_to: "ai_dev_agent"
+        completion_date: "2026-02-11"
+        story_doc: "docs/stories/STORY-3.2.md"
       - story_id: "STORY-3.3"
         title: "Training Loop & train CLI"
         points: 8
