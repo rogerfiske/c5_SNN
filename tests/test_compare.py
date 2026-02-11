@@ -757,3 +757,47 @@ class TestPhaseACLI:
             cli, ["phase-a", "--seeds", "abc,def"]
         )
         assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# Integration test: phase-b-sweep CLI (STORY-5.2)
+# ---------------------------------------------------------------------------
+
+
+class TestPhaseBSweepCLI:
+    """Integration tests for the phase-b-sweep CLI command."""
+
+    def test_phase_b_sweep_command_exists(self):
+        """phase-b-sweep command is registered and shows help."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["phase-b-sweep", "--help"])
+        assert result.exit_code == 0
+        assert "Run Spike-GRU hyperparameter sweep" in result.output
+
+    def test_phase_b_sweep_output_option(self):
+        """phase-b-sweep --help shows --output option with default."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["phase-b-sweep", "--help"])
+        assert "--output" in result.output
+        assert "phase_b_sweep.csv" in result.output
+
+    def test_phase_b_sweep_top_k_option(self):
+        """phase-b-sweep --help shows --top-k option."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["phase-b-sweep", "--help"])
+        assert "--top-k" in result.output
+
+    def test_phase_b_sweep_seeds_option(self):
+        """phase-b-sweep --help shows --seeds option with default."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["phase-b-sweep", "--help"])
+        assert "--seeds" in result.output
+        assert "42,123,7" in result.output
+
+    def test_phase_b_sweep_invalid_seeds(self):
+        """phase-b-sweep with non-integer seeds exits non-zero."""
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["phase-b-sweep", "--seeds", "abc,def"]
+        )
+        assert result.exit_code != 0

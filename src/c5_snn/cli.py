@@ -558,6 +558,343 @@ def phase_a(seeds: str, output_path: str) -> None:
     click.echo()
 
 
+@cli.command("phase-b-sweep")
+@click.option(
+    "--output",
+    "output_path",
+    default="results/phase_b_sweep.csv",
+    help="Path for sweep results CSV.",
+    show_default=True,
+)
+@click.option(
+    "--top-k",
+    default=3,
+    type=int,
+    help="Number of top configs to re-run with multi-seed.",
+    show_default=True,
+)
+@click.option(
+    "--seeds",
+    default="42,123,7",
+    help="Comma-separated seeds for top-K re-runs.",
+    show_default=True,
+)
+def phase_b_sweep(output_path: str, top_k: int, seeds: str) -> None:
+    """Run Spike-GRU hyperparameter sweep (Phase B)."""
+    import copy
+    import csv
+    import itertools
+    import shutil
+    import time
+
+    from c5_snn.data.dataset import get_dataloaders
+    from c5_snn.data.loader import load_csv
+    from c5_snn.data.splits import create_splits
+    from c5_snn.data.windowing import build_windows
+    from c5_snn.models.base import get_model
+    from c5_snn.training.compare import (
+        build_comparison,
+        format_comparison_table,
+        save_comparison,
+    )
+    from c5_snn.training.evaluate import evaluate_model
+    from c5_snn.training.trainer import Trainer
+    from c5_snn.utils.device import get_device
+    from c5_snn.utils.seed import set_global_seed
+
+    setup_logging("INFO")
+
+    # 1. Parse seeds
+    try:
+        seed_list = [int(s.strip()) for s in seeds.split(",")]
+    except ValueError:
+        click.echo("ERROR: Seeds must be comma-separated integers", err=True)
+        sys.exit(1)
+
+    screening_seed = seed_list[0]
+
+    # 2. Standard data pipeline (shared across all runs)
+    raw_path = "data/raw/CA5_matrix_binary.csv"
+    window_size = 21
+    split_ratios = (0.70, 0.15, 0.15)
+    batch_size = 64
+
+    try:
+        df = load_csv(raw_path)
+    except (DataValidationError, FileNotFoundError) as e:
+        click.echo(f"ERROR: Failed to load data: {e}", err=True)
+        sys.exit(1)
+
+    try:
+        X, y = build_windows(df, window_size)
+    except (ConfigError, DataValidationError) as e:
+        click.echo(f"ERROR: {e}", err=True)
+        sys.exit(1)
+
+    split_info = create_splits(
+        n_samples=X.shape[0],
+        ratios=split_ratios,
+        window_size=window_size,
+        dates=df["date"] if "date" in df.columns else None,
+    )
+
+    dataloaders = get_dataloaders(split_info, X, y, batch_size)
+    test_loader = dataloaders["test"]
+    test_split_size = len(test_loader.dataset)
+    device = get_device()
+
+    base_data_cfg = {
+        "raw_path": raw_path,
+        "window_size": window_size,
+        "split_ratios": list(split_ratios),
+        "batch_size": batch_size,
+    }
+
+    # 3. Define sweep grid: 3 x 2 x 3 x 2 = 36 configs
+    sweep_grid = {
+        "hidden_size": [64, 128, 256],
+        "num_layers": [1, 2],
+        "beta": [0.5, 0.8, 0.95],
+        "encoding": ["direct", "rate_coded"],
+    }
+    combos = list(itertools.product(
+        sweep_grid["hidden_size"],
+        sweep_grid["num_layers"],
+        sweep_grid["beta"],
+        sweep_grid["encoding"],
+    ))
+
+    click.echo()
+    click.echo("Phase B Spike-GRU HP Sweep")
+    click.echo("=" * 50)
+    click.echo()
+    click.echo(f"Phase 1: Screening ({len(combos)} configs, seed={screening_seed})")
+
+    # 4. Phase 1 — Screening: single-seed sweep on validation set
+    sweep_results = []
+
+    for i, (h, n, b, e) in enumerate(combos):
+        set_global_seed(screening_seed)
+
+        config = {
+            "experiment": {
+                "name": f"spike_gru_sweep_{i:03d}",
+                "seed": screening_seed,
+            },
+            "data": copy.deepcopy(base_data_cfg),
+            "model": {
+                "type": "spike_gru",
+                "hidden_size": h,
+                "num_layers": n,
+                "beta": b,
+                "encoding": e,
+                "timesteps": 10,
+                "dropout": 0.0,
+                "surrogate": "fast_sigmoid",
+            },
+            "training": {
+                "epochs": 100,
+                "learning_rate": 0.001,
+                "optimizer": "adam",
+                "early_stopping_patience": 10,
+                "early_stopping_metric": "val_recall_at_20",
+            },
+            "output": {"dir": f"results/phase_b_sweep_{i:03d}"},
+            "log_level": "WARNING",
+        }
+
+        model = get_model(config)
+        trainer = Trainer(model, config, dataloaders, device)
+
+        t0 = time.time()
+        result = trainer.run()
+        elapsed = time.time() - t0
+
+        # Evaluate on validation set for screening
+        val_eval = evaluate_model(model, dataloaders["val"], device)
+
+        row = {
+            "config_id": i,
+            "hidden_size": h,
+            "num_layers": n,
+            "beta": b,
+            "encoding": e,
+            "timesteps": 10 if e == "rate_coded" else 1,
+            "val_recall_at_20": round(val_eval["metrics"]["recall_at_20"], 4),
+            "val_hit_at_20": round(val_eval["metrics"]["hit_at_20"], 4),
+            "val_mrr": round(val_eval["metrics"]["mrr"], 4),
+            "training_time_s": round(elapsed, 1),
+            "best_epoch": result["best_epoch"],
+        }
+        sweep_results.append(row)
+
+        click.echo(
+            f"[{i + 1}/{len(combos)}] spike_gru h={h} l={n} b={b:.2f} "
+            f"enc={e} -> val_recall@20={row['val_recall_at_20']:.4f} "
+            f"({elapsed:.1f}s)"
+        )
+
+    # 5. Save sweep CSV
+    csv_path = Path(output_path)
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "config_id", "hidden_size", "num_layers", "beta", "encoding",
+        "timesteps", "val_recall_at_20", "val_hit_at_20", "val_mrr",
+        "training_time_s", "best_epoch",
+    ]
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(sweep_results)
+
+    click.echo()
+    click.echo(f"Sweep results saved to: {csv_path}")
+
+    # 6. Print screening leaderboard (top 10)
+    sorted_results = sorted(
+        sweep_results,
+        key=lambda r: r["val_recall_at_20"],
+        reverse=True,
+    )
+
+    click.echo()
+    click.echo("Screening Leaderboard (top 10):")
+    click.echo(
+        f"{'Rank':<6}{'Config':<8}{'Hidden':<8}{'Layers':<8}"
+        f"{'Beta':<7}{'Encoding':<13}{'val_R@20':<10}{'Time(s)':<8}"
+    )
+    click.echo("-" * 68)
+    for rank, row in enumerate(sorted_results[:10], 1):
+        click.echo(
+            f"{rank:<6}{row['config_id']:<8}{row['hidden_size']:<8}"
+            f"{row['num_layers']:<8}{row['beta']:<7.2f}"
+            f"{row['encoding']:<13}{row['val_recall_at_20']:<10.4f}"
+            f"{row['training_time_s']:<8.1f}"
+        )
+
+    # 7. Phase 2 — Top-K re-run with multiple seeds on TEST set
+    top_configs = sorted_results[:top_k]
+
+    click.echo()
+    click.echo(
+        f"Phase 2: Top-{top_k} re-run with {len(seed_list)} seeds "
+        f"({', '.join(str(s) for s in seed_list)})"
+    )
+
+    model_results = []
+    best_mean_recall = -1.0
+    best_checkpoint_dir = None
+
+    for rank, top in enumerate(top_configs):
+        h = top["hidden_size"]
+        n = top["num_layers"]
+        b = top["beta"]
+        e = top["encoding"]
+
+        click.echo(
+            f"[{rank + 1}/{top_k}] Top-{rank + 1} config: "
+            f"h={h}, l={n}, b={b:.2f}, enc={e}"
+        )
+
+        seed_metrics = []
+        total_time = 0.0
+
+        for seed in seed_list:
+            set_global_seed(seed)
+
+            config = {
+                "experiment": {
+                    "name": f"spike_gru_top{rank + 1}_seed{seed}",
+                    "seed": seed,
+                },
+                "data": copy.deepcopy(base_data_cfg),
+                "model": {
+                    "type": "spike_gru",
+                    "hidden_size": h,
+                    "num_layers": n,
+                    "beta": b,
+                    "encoding": e,
+                    "timesteps": 10,
+                    "dropout": 0.0,
+                    "surrogate": "fast_sigmoid",
+                },
+                "training": {
+                    "epochs": 100,
+                    "learning_rate": 0.001,
+                    "optimizer": "adam",
+                    "early_stopping_patience": 10,
+                    "early_stopping_metric": "val_recall_at_20",
+                },
+                "output": {
+                    "dir": f"results/phase_b_top{rank + 1}_seed{seed}",
+                },
+                "log_level": "WARNING",
+            }
+
+            model = get_model(config)
+            trainer = Trainer(model, config, dataloaders, device)
+
+            t0 = time.time()
+            trainer.run()
+            elapsed = time.time() - t0
+            total_time += elapsed
+
+            test_eval = evaluate_model(model, test_loader, device)
+            seed_metrics.append(test_eval["metrics"])
+            click.echo(
+                f"  Seed {seed}: test_recall@20="
+                f"{test_eval['metrics']['recall_at_20']:.4f} ({elapsed:.1f}s)"
+            )
+
+        # Compute mean test recall for best-checkpoint selection
+        mean_recall = sum(
+            m["recall_at_20"] for m in seed_metrics
+        ) / len(seed_metrics)
+        if mean_recall > best_mean_recall:
+            best_mean_recall = mean_recall
+            # Last seed's checkpoint is representative
+            best_checkpoint_dir = (
+                f"results/phase_b_top{rank + 1}_seed{seed_list[-1]}"
+            )
+
+        model_results.append({
+            "name": f"spike_gru_top{rank + 1}",
+            "type": "learned",
+            "phase": "phase_b",
+            "seed_metrics": seed_metrics,
+            "training_time_s": round(total_time, 1),
+            "environment": "local",
+            "config": {
+                "hidden_size": h,
+                "num_layers": n,
+                "beta": b,
+                "encoding": e,
+            },
+        })
+
+    # 8. Save top-K comparison JSON
+    report = build_comparison(model_results, window_size, test_split_size)
+    top_json_path = str(Path(output_path).parent / "phase_b_top3.json")
+    save_comparison(report, top_json_path)
+
+    # 9. Print top-K comparison table
+    click.echo()
+    click.echo(format_comparison_table(report))
+    click.echo(f"Results saved to: {top_json_path}")
+
+    # 10. Copy best checkpoint to results/phase_b_best/
+    if best_checkpoint_dir is not None:
+        best_src = Path(best_checkpoint_dir)
+        best_dst = Path("results/phase_b_best")
+        if best_src.exists():
+            if best_dst.exists():
+                shutil.rmtree(best_dst)
+            shutil.copytree(best_src, best_dst)
+            click.echo(f"Best checkpoint: {best_dst}")
+
+    click.echo()
+
+
 @cli.command("evaluate")
 @click.option(
     "--checkpoint",
