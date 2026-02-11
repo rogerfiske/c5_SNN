@@ -44,7 +44,7 @@ sprints:
     end_date: "2026-02-23"
     capacity_points: 20
     committed_points: 16
-    completed_points: 5
+    completed_points: 8
     status: "in_progress"
     goal: "Complete data pipeline and evaluation harness"
     stories:
@@ -58,8 +58,10 @@ sprints:
       - story_id: "STORY-2.2"
         title: "Time-Based Splits"
         points: 3
-        status: "not_started"
-        assigned_to: null
+        status: "completed"
+        assigned_to: "ai_dev_agent"
+        completion_date: "2026-02-11"
+        story_doc: "docs/stories/STORY-2.2.md"
       - story_id: "STORY-2.3"
         title: "Evaluation Harness & Metrics"
         points: 5
