@@ -1,9 +1,9 @@
-"""Tests for SNN models (STORY-4.2)."""
+"""Tests for SNN models (STORY-4.2, STORY-4.3)."""
 
 import torch
 
 from c5_snn.models.base import MODEL_REGISTRY, get_model
-from c5_snn.models.snn_models import SpikingMLP
+from c5_snn.models.snn_models import SpikingCNN1D, SpikingMLP
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -378,6 +378,412 @@ class TestConfigFile:
         import yaml
 
         with open("configs/snn_phase_a_mlp.yaml") as f:
+            config = yaml.safe_load(f)
+
+        model = get_model(config)
+        x = _binary_input(batch=4, window=21)
+        out = model(x)
+        assert out.shape == (4, 39)
+
+
+# ===========================================================================
+# SpikingCNN1D tests (STORY-4.3)
+# ===========================================================================
+
+
+def _make_cnn_config(
+    channels=None,
+    kernel_sizes=None,
+    beta=0.95,
+    encoding="direct",
+    timesteps=10,
+    window_size=21,
+) -> dict:
+    """Create a minimal config dict for SpikingCNN1D."""
+    cfg = {
+        "model": {
+            "type": "spiking_cnn1d",
+            "encoding": encoding,
+            "timesteps": timesteps,
+            "beta": beta,
+        },
+        "data": {
+            "window_size": window_size,
+        },
+    }
+    if channels is not None:
+        cfg["model"]["channels"] = channels
+    if kernel_sizes is not None:
+        cfg["model"]["kernel_sizes"] = kernel_sizes
+    return cfg
+
+
+# ---------------------------------------------------------------------------
+# SpikingCNN1D — Construction
+# ---------------------------------------------------------------------------
+
+
+class TestSpikingCNN1DConstruction:
+    """Verify SpikingCNN1D construction and config parsing."""
+
+    def test_default_channels(self):
+        """Default channels is [64, 64]."""
+        model = SpikingCNN1D(_make_cnn_config())
+        assert model.channels == [64, 64]
+
+    def test_default_kernel_sizes(self):
+        """Default kernel_sizes is [3, 3]."""
+        model = SpikingCNN1D(_make_cnn_config())
+        assert model.kernel_sizes == [3, 3]
+
+    def test_custom_channels(self):
+        """Custom channels from config."""
+        model = SpikingCNN1D(
+            _make_cnn_config(channels=[32, 64, 128], kernel_sizes=[3, 3, 3])
+        )
+        assert model.channels == [32, 64, 128]
+
+    def test_single_conv_layer(self):
+        """Single conv layer configuration."""
+        model = SpikingCNN1D(
+            _make_cnn_config(channels=[64], kernel_sizes=[3])
+        )
+        assert model.channels == [64]
+        assert len(model.conv_layers) == 1
+        assert len(model.lif_layers) == 1
+
+    def test_is_base_model(self):
+        """SpikingCNN1D subclasses BaseModel."""
+        from c5_snn.models.base import BaseModel
+
+        model = SpikingCNN1D(_make_cnn_config())
+        assert isinstance(model, BaseModel)
+
+    def test_is_nn_module(self):
+        """SpikingCNN1D is an nn.Module."""
+        model = SpikingCNN1D(_make_cnn_config())
+        assert isinstance(model, torch.nn.Module)
+
+    def test_layer_counts(self):
+        """Number of conv and LIF layers matches channels length."""
+        model = SpikingCNN1D(_make_cnn_config(channels=[64, 64]))
+        assert len(model.conv_layers) == 2
+        assert len(model.lif_layers) == 2
+
+    def test_readout_layer(self):
+        """Readout layer projects from last channel to 39."""
+        model = SpikingCNN1D(_make_cnn_config(channels=[64, 128]))
+        assert model.readout.in_features == 128
+        assert model.readout.out_features == 39
+
+    def test_readout_single_layer(self):
+        """Readout with single conv layer."""
+        model = SpikingCNN1D(
+            _make_cnn_config(channels=[32], kernel_sizes=[5])
+        )
+        assert model.readout.in_features == 32
+        assert model.readout.out_features == 39
+
+    def test_conv_in_channels(self):
+        """First conv layer has 39 input channels."""
+        model = SpikingCNN1D(_make_cnn_config())
+        assert model.conv_layers[0].in_channels == 39
+
+    def test_conv_padding_preserves_w(self):
+        """Conv1d padding is kernel_size // 2 (same padding)."""
+        model = SpikingCNN1D(
+            _make_cnn_config(channels=[64], kernel_sizes=[5])
+        )
+        assert model.conv_layers[0].padding == (2,)  # 5 // 2 = 2
+
+    def test_encoding_mode_stored(self):
+        """Encoder encoding mode matches config."""
+        model = SpikingCNN1D(_make_cnn_config(encoding="rate_coded"))
+        assert model.encoder.encoding == "rate_coded"
+
+    def test_window_size_stored(self):
+        """Window size is stored for membrane init."""
+        model = SpikingCNN1D(_make_cnn_config(window_size=7))
+        assert model.window_size == 7
+
+
+# ---------------------------------------------------------------------------
+# SpikingCNN1D — Forward pass
+# ---------------------------------------------------------------------------
+
+
+class TestSpikingCNN1DForward:
+    """Verify SpikingCNN1D forward pass shapes."""
+
+    def test_forward_shape_default(self):
+        """Forward: (4, 21, 39) -> (4, 39)."""
+        model = SpikingCNN1D(_make_cnn_config())
+        x = _binary_input(batch=4, window=21)
+        out = model(x)
+        assert out.shape == (4, 39)
+
+    def test_forward_shape_batch_1(self):
+        """Forward: (1, 21, 39) -> (1, 39)."""
+        model = SpikingCNN1D(_make_cnn_config())
+        x = _binary_input(batch=1, window=21)
+        out = model(x)
+        assert out.shape == (1, 39)
+
+    def test_forward_shape_large_batch(self):
+        """Forward: (64, 21, 39) -> (64, 39)."""
+        model = SpikingCNN1D(_make_cnn_config())
+        x = _binary_input(batch=64, window=21)
+        out = model(x)
+        assert out.shape == (64, 39)
+
+    def test_forward_shape_window_7(self):
+        """Forward with W=7: (4, 7, 39) -> (4, 39)."""
+        model = SpikingCNN1D(_make_cnn_config(window_size=7))
+        x = _binary_input(batch=4, window=7)
+        out = model(x)
+        assert out.shape == (4, 39)
+
+    def test_forward_shape_rate_coded(self):
+        """Forward with rate_coded encoding: (4, 21, 39) -> (4, 39)."""
+        model = SpikingCNN1D(
+            _make_cnn_config(encoding="rate_coded", timesteps=10)
+        )
+        x = _binary_input(batch=4, window=21)
+        out = model(x)
+        assert out.shape == (4, 39)
+
+    def test_forward_shape_single_conv(self):
+        """Forward with single conv layer: (4, 21, 39) -> (4, 39)."""
+        model = SpikingCNN1D(
+            _make_cnn_config(channels=[64], kernel_sizes=[3])
+        )
+        x = _binary_input(batch=4, window=21)
+        out = model(x)
+        assert out.shape == (4, 39)
+
+    def test_forward_shape_three_conv(self):
+        """Forward with three conv layers: (4, 21, 39) -> (4, 39)."""
+        model = SpikingCNN1D(
+            _make_cnn_config(
+                channels=[32, 64, 128], kernel_sizes=[3, 3, 3]
+            )
+        )
+        x = _binary_input(batch=4, window=21)
+        out = model(x)
+        assert out.shape == (4, 39)
+
+    def test_forward_shape_kernel_5(self):
+        """Forward with kernel_size=5: (4, 21, 39) -> (4, 39)."""
+        model = SpikingCNN1D(
+            _make_cnn_config(channels=[64, 64], kernel_sizes=[5, 5])
+        )
+        x = _binary_input(batch=4, window=21)
+        out = model(x)
+        assert out.shape == (4, 39)
+
+    def test_forward_output_dtype(self):
+        """Output dtype is float32."""
+        model = SpikingCNN1D(_make_cnn_config())
+        x = _binary_input()
+        out = model(x)
+        assert out.dtype == torch.float32
+
+    def test_forward_all_zeros(self):
+        """All-zeros input produces valid output."""
+        model = SpikingCNN1D(_make_cnn_config())
+        x = torch.zeros(4, 21, 39)
+        out = model(x)
+        assert out.shape == (4, 39)
+        assert torch.isfinite(out).all()
+
+    def test_forward_all_ones(self):
+        """All-ones input produces valid output."""
+        model = SpikingCNN1D(_make_cnn_config())
+        x = torch.ones(4, 21, 39)
+        out = model(x)
+        assert out.shape == (4, 39)
+        assert torch.isfinite(out).all()
+
+
+# ---------------------------------------------------------------------------
+# SpikingCNN1D — Backward pass
+# ---------------------------------------------------------------------------
+
+
+class TestSpikingCNN1DBackward:
+    """Verify backward pass through surrogate gradients."""
+
+    def test_backward_completes(self):
+        """Backward pass completes without error."""
+        model = SpikingCNN1D(_make_cnn_config())
+        x = _binary_input()
+        out = model(x)
+        loss = out.sum()
+        loss.backward()
+
+    def test_backward_with_bce_loss(self):
+        """Backward with BCEWithLogitsLoss."""
+        model = SpikingCNN1D(_make_cnn_config())
+        x = _binary_input()
+        target = (torch.rand(4, 39) > 0.5).float()
+        out = model(x)
+        loss = torch.nn.functional.binary_cross_entropy_with_logits(
+            out, target
+        )
+        loss.backward()
+
+    def test_gradients_exist(self):
+        """Conv layers have gradients after backward."""
+        model = SpikingCNN1D(_make_cnn_config())
+        x = _binary_input()
+        out = model(x)
+        loss = out.sum()
+        loss.backward()
+        for conv in model.conv_layers:
+            assert conv.weight.grad is not None
+            assert conv.weight.grad.abs().sum() > 0
+        assert model.readout.weight.grad is not None
+
+    def test_backward_rate_coded(self):
+        """Backward completes with rate_coded encoding."""
+        model = SpikingCNN1D(
+            _make_cnn_config(encoding="rate_coded", timesteps=5)
+        )
+        x = _binary_input()
+        out = model(x)
+        loss = out.sum()
+        loss.backward()
+
+
+# ---------------------------------------------------------------------------
+# SpikingCNN1D — Learnable parameters
+# ---------------------------------------------------------------------------
+
+
+class TestSpikingCNN1DParameters:
+    """Verify SpikingCNN1D has learnable parameters."""
+
+    def test_has_parameters(self):
+        """Model has learnable parameters."""
+        model = SpikingCNN1D(_make_cnn_config())
+        params = list(model.parameters())
+        assert len(params) > 0
+
+    def test_parameter_count_reasonable(self):
+        """Parameter count matches expected architecture."""
+        model = SpikingCNN1D(
+            _make_cnn_config(channels=[64, 64], kernel_sizes=[3, 3])
+        )
+        total_params = sum(p.numel() for p in model.parameters())
+        # Conv1: in=39, out=64, kernel=3 -> 39*64*3 + 64 = 7488 + 64
+        # Conv2: in=64, out=64, kernel=3 -> 64*64*3 + 64 = 12288 + 64
+        # Readout: 64*39 + 39 = 2496 + 39
+        expected = (39 * 64 * 3 + 64) + (64 * 64 * 3 + 64) + (64 * 39 + 39)
+        assert total_params == expected
+
+    def test_parameters_require_grad(self):
+        """All parameters require gradient."""
+        model = SpikingCNN1D(_make_cnn_config())
+        for param in model.parameters():
+            assert param.requires_grad
+
+
+# ---------------------------------------------------------------------------
+# SpikingCNN1D — Membrane potential reset
+# ---------------------------------------------------------------------------
+
+
+class TestSpikingCNN1DMembraneReset:
+    """Verify membrane potentials are reset each forward call."""
+
+    def test_consecutive_forwards_independent(self):
+        """Two consecutive forward passes produce the same output."""
+        model = SpikingCNN1D(_make_cnn_config())
+        model.eval()
+        x = _binary_input()
+
+        with torch.no_grad():
+            out1 = model(x)
+            out2 = model(x)
+
+        torch.testing.assert_close(out1, out2)
+
+    def test_different_inputs_different_outputs(self):
+        """Different inputs produce different outputs with rate_coded."""
+        model = SpikingCNN1D(
+            _make_cnn_config(encoding="rate_coded", timesteps=10)
+        )
+        model.eval()
+        x1 = torch.zeros(4, 21, 39)
+        x2 = _binary_input(batch=4, window=21)
+
+        with torch.no_grad():
+            out1 = model(x1)
+            out2 = model(x2)
+
+        assert not torch.equal(out1, out2)
+
+
+# ---------------------------------------------------------------------------
+# SpikingCNN1D — Model registry
+# ---------------------------------------------------------------------------
+
+
+class TestSpikingCNN1DRegistry:
+    """Verify SpikingCNN1D is registered in MODEL_REGISTRY."""
+
+    def test_registered(self):
+        """'spiking_cnn1d' is in MODEL_REGISTRY."""
+        assert "spiking_cnn1d" in MODEL_REGISTRY
+
+    def test_registry_class(self):
+        """Registry entry is SpikingCNN1D class."""
+        assert MODEL_REGISTRY["spiking_cnn1d"] is SpikingCNN1D
+
+    def test_get_model_creates_instance(self):
+        """get_model with spiking_cnn1d config creates SpikingCNN1D."""
+        config = _make_cnn_config()
+        model = get_model(config)
+        assert isinstance(model, SpikingCNN1D)
+
+    def test_get_model_custom_config(self):
+        """get_model passes config to SpikingCNN1D."""
+        config = _make_cnn_config(channels=[32, 64, 128])
+        model = get_model(config)
+        assert model.channels == [32, 64, 128]
+
+    def test_exported_from_models(self):
+        """SpikingCNN1D is accessible from c5_snn.models."""
+        from c5_snn.models import SpikingCNN1D as Cnn
+
+        assert Cnn is SpikingCNN1D
+
+
+# ---------------------------------------------------------------------------
+# SpikingCNN1D — Config file loading
+# ---------------------------------------------------------------------------
+
+
+class TestCNNConfigFile:
+    """Verify config file can create SpikingCNN1D."""
+
+    def test_load_snn_phase_a_cnn_config(self):
+        """Load configs/snn_phase_a_cnn.yaml and create model."""
+        import yaml
+
+        with open("configs/snn_phase_a_cnn.yaml") as f:
+            config = yaml.safe_load(f)
+
+        model = get_model(config)
+        assert isinstance(model, SpikingCNN1D)
+        assert model.channels == [64, 64]
+        assert model.kernel_sizes == [3, 3]
+
+    def test_cnn_config_forward_shape(self):
+        """Model from config produces correct output shape."""
+        import yaml
+
+        with open("configs/snn_phase_a_cnn.yaml") as f:
             config = yaml.safe_load(f)
 
         model = get_model(config)

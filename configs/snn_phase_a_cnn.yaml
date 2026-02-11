@@ -1,0 +1,31 @@
+# SNN Phase A — Spiking 1D-CNN experiment config (STORY-4.3)
+experiment:
+  name: "snn_phase_a_cnn"
+  seed: 42
+
+data:
+  raw_path: "data/raw/CA5_matrix_binary.csv"
+  window_size: 21
+  split_ratios: [0.70, 0.15, 0.15]
+  batch_size: 64
+
+model:
+  type: "spiking_cnn1d"
+  encoding: "direct"
+  timesteps: 10
+  channels: [64, 64]
+  kernel_sizes: [3, 3]
+  beta: 0.95
+  surrogate: "fast_sigmoid"
+
+training:
+  epochs: 100
+  learning_rate: 0.001
+  optimizer: "adam"
+  early_stopping_patience: 10
+  early_stopping_metric: "val_recall_at_20"
+
+output:
+  dir: "results/snn_phase_a_cnn"
+
+log_level: "INFO"
