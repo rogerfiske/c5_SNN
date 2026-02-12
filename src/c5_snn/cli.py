@@ -770,6 +770,550 @@ def phase_b(output_path: str, phase_a_path: str, phase_b_path: str) -> None:
     click.echo()
 
 
+@cli.command("final-report")
+@click.option(
+    "--output",
+    "output_path",
+    default="results/final_comparison.json",
+    help="Path for final comparison JSON.",
+    show_default=True,
+)
+@click.option(
+    "--report",
+    "report_path",
+    default="results/final_report.md",
+    help="Path for final report markdown.",
+    show_default=True,
+)
+@click.option(
+    "--cumulative",
+    "cumulative_path",
+    default="results/cumulative_comparison.json",
+    help="Path to cumulative comparison JSON (Phase A + B).",
+    show_default=True,
+)
+@click.option(
+    "--phase-c-top",
+    "phase_c_path",
+    default="results/phase_c_top5.json",
+    help="Path to Phase C top-5 JSON.",
+    show_default=True,
+)
+def final_report(
+    output_path: str,
+    report_path: str,
+    cumulative_path: str,
+    phase_c_path: str,
+) -> None:
+    """Generate final comprehensive comparison and report."""
+    import copy
+    import json
+    from datetime import datetime, timezone
+
+    from c5_snn.training.compare import save_comparison
+
+    setup_logging("INFO")
+
+    # 1. Load cumulative comparison (Phase A + B: 5 models at W=21)
+    cumulative_file = Path(cumulative_path)
+    if not cumulative_file.exists():
+        click.echo(
+            f"ERROR: Cumulative comparison not found: {cumulative_path}",
+            err=True,
+        )
+        sys.exit(1)
+
+    with open(cumulative_file) as f:
+        cumul_report = json.load(f)
+
+    click.echo()
+    click.echo("Final Comprehensive Comparison")
+    click.echo("=" * 50)
+    click.echo()
+    click.echo(
+        f"Loading cumulative results: {cumulative_path} "
+        f"({len(cumul_report['models'])} models, "
+        f"W={cumul_report['window_size']})"
+    )
+
+    # 2. Load Phase C top-5 results
+    phase_c_file = Path(phase_c_path)
+    if not phase_c_file.exists():
+        click.echo(
+            f"ERROR: Phase C results not found: {phase_c_path}", err=True
+        )
+        sys.exit(1)
+
+    with open(phase_c_file) as f:
+        phase_c_report = json.load(f)
+
+    click.echo(
+        f"Loading Phase C results: {phase_c_path} "
+        f"({len(phase_c_report['models'])} configs, "
+        f"W={phase_c_report['window_size']})"
+    )
+
+    # 3. Select best SpikingTransformer from Phase C top-5
+    best_c = max(
+        phase_c_report["models"],
+        key=lambda m: m["metrics_mean"]["recall_at_20"],
+    )
+    best_c = copy.deepcopy(best_c)
+    original_name = best_c["name"]
+    best_c["name"] = "spiking_transformer"
+
+    click.echo(f"Selected best SpikingTransformer: {original_name}")
+
+    # 4. Build final model list (5 from cumulative + 1 Phase C)
+    final_models = []
+    for model in cumul_report["models"]:
+        final_models.append(copy.deepcopy(model))
+    final_models.append(best_c)
+
+    # 5. Build final comparison report
+    report = {
+        "models": final_models,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "notes": (
+            f"Phase A/B models evaluated at W={cumul_report['window_size']} "
+            f"(test_n={cumul_report['test_split_size']}). "
+            f"Phase C spiking_transformer evaluated at "
+            f"W={phase_c_report['window_size']} "
+            f"(test_n={phase_c_report['test_split_size']}). "
+            "Different window sizes yield slightly different test splits."
+        ),
+    }
+
+    # 6. Save comparison JSON
+    save_comparison(report, output_path)
+
+    # 7. Print final leaderboard sorted by Recall@20
+    sorted_models = sorted(
+        final_models,
+        key=lambda m: m["metrics_mean"]["recall_at_20"],
+        reverse=True,
+    )
+
+    click.echo()
+    click.echo("Final Leaderboard (sorted by Recall@20):")
+    click.echo(
+        f"{'#':<3} {'Model':<25} {'Phase':<10} {'Recall@20':<16} "
+        f"{'Hit@20':<16} {'MRR':<16} {'Seeds':<6}"
+    )
+    click.echo("-" * 92)
+    for rank, model in enumerate(sorted_models, 1):
+        mean = model["metrics_mean"]
+        std = model["metrics_std"]
+        n = model["n_seeds"]
+        phase = model.get("phase", "")
+        if n > 1 and std["recall_at_20"] > 0:
+            r20 = f"{mean['recall_at_20']:.4f}+/-{std['recall_at_20']:.3f}"
+            h20 = f"{mean['hit_at_20']:.4f}+/-{std['hit_at_20']:.3f}"
+            mrr = f"{mean['mrr']:.4f}+/-{std['mrr']:.3f}"
+        else:
+            r20 = f"{mean['recall_at_20']:.4f}"
+            h20 = f"{mean['hit_at_20']:.4f}"
+            mrr = f"{mean['mrr']:.4f}"
+        click.echo(
+            f"{rank:<3} {model['name']:<25} {phase:<10} "
+            f"{r20:<16} {h20:<16} {mrr:<16} {n:<6}"
+        )
+
+    # 8. Print analysis
+    models_by_name = {m["name"]: m for m in final_models}
+    freq = models_by_name["frequency_baseline"]
+    gru = models_by_name["gru_baseline"]
+    transformer = models_by_name["spiking_transformer"]
+
+    freq_r20 = freq["metrics_mean"]["recall_at_20"]
+    gru_r20 = gru["metrics_mean"]["recall_at_20"]
+    trans_r20 = transformer["metrics_mean"]["recall_at_20"]
+
+    # Best learned model
+    learned = [m for m in final_models if m["type"] == "learned"]
+    best_learned = max(
+        learned, key=lambda m: m["metrics_mean"]["recall_at_20"]
+    )
+    best_r20 = best_learned["metrics_mean"]["recall_at_20"]
+
+    click.echo()
+    click.echo("Key Findings:")
+    click.echo(
+        f"  Best overall:           frequency_baseline "
+        f"(Recall@20={freq_r20:.4f})"
+    )
+    click.echo(
+        f"  Best learned model:     {best_learned['name']} "
+        f"(Recall@20={best_r20:.4f})"
+    )
+
+    delta_freq = trans_r20 - freq_r20
+    pct_freq = (delta_freq / freq_r20) * 100 if freq_r20 != 0 else 0
+    delta_gru = trans_r20 - gru_r20
+    pct_gru = (delta_gru / gru_r20) * 100 if gru_r20 != 0 else 0
+
+    click.echo(
+        f"  Transformer vs Freq:    {delta_freq:+.4f} ({pct_freq:+.2f}%)"
+    )
+    click.echo(
+        f"  Transformer vs GRU:     {delta_gru:+.4f} ({pct_gru:+.2f}%)"
+    )
+    click.echo(
+        f"  Window size caveat:     Phase A/B at W="
+        f"{cumul_report['window_size']}, "
+        f"Phase C at W={phase_c_report['window_size']}"
+    )
+    click.echo(
+        "  Performance cluster:    All models within "
+        f"{freq_r20 - sorted_models[-1]['metrics_mean']['recall_at_20']:.4f}"
+        " Recall@20 of each other"
+    )
+
+    click.echo()
+    click.echo(f"Comparison saved to: {output_path}")
+
+    # 9. Generate final report markdown
+    _generate_final_report_md(
+        report_path,
+        sorted_models,
+        cumul_report,
+        phase_c_report,
+        best_learned,
+    )
+
+    click.echo(f"Report saved to:    {report_path}")
+    click.echo()
+
+
+def _generate_final_report_md(
+    report_path: str,
+    sorted_models: list,
+    cumul_report: dict,
+    phase_c_report: dict,
+    best_learned: dict,
+) -> None:
+    """Generate the final report markdown file."""
+    from datetime import datetime, timezone
+
+    models_by_name = {m["name"]: m for m in sorted_models}
+    freq = models_by_name["frequency_baseline"]
+    gru = models_by_name["gru_baseline"]
+    mlp = models_by_name["spiking_mlp"]
+    cnn = models_by_name["spiking_cnn1d"]
+    sgru = models_by_name["spike_gru"]
+    trans = models_by_name["spiking_transformer"]
+
+    def _fmt(val, std_val, n_seeds):
+        if n_seeds > 1 and std_val > 0:
+            return f"{val:.4f} +/- {std_val:.3f}"
+        return f"{val:.4f}"
+
+    lines = []
+    lines.append("# c5_SNN Final Experiment Report")
+    lines.append("")
+    lines.append(
+        f"**Generated:** "
+        f"{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
+    )
+    lines.append("")
+
+    # Executive Summary
+    lines.append("## Executive Summary")
+    lines.append("")
+    lines.append(
+        "This report presents the final results of the c5_SNN project: "
+        "a systematic evaluation of Spiking Neural Network (SNN) "
+        "architectures for CA5 event prediction. Six model types were "
+        "evaluated across three phases, progressing from simple baselines "
+        "through feedforward SNNs, recurrent SNNs, and attention-based "
+        "Spiking Transformers."
+    )
+    lines.append("")
+
+    best_r20 = best_learned["metrics_mean"]["recall_at_20"]
+    freq_r20 = freq["metrics_mean"]["recall_at_20"]
+    lines.append("**Key result:** "
+                 f"The best learned model ({best_learned['name']}) achieves "
+                 f"Recall@20 = {best_r20:.4f}, compared to the "
+                 f"FrequencyBaseline at {freq_r20:.4f}. "
+                 "All models cluster within a narrow performance band "
+                 "(~0.51-0.52 Recall@20), suggesting the dataset's temporal "
+                 "structure is inherently simple for this prediction task.")
+    lines.append("")
+
+    # Final Leaderboard
+    lines.append("## Final Leaderboard")
+    lines.append("")
+    lines.append(
+        "| Rank | Model | Phase | Window | Recall@20 | Hit@20 | MRR "
+        "| Seeds | Time (s) |"
+    )
+    lines.append(
+        "|------|-------|-------|--------|-----------|--------|-----"
+        "|-------|----------|"
+    )
+
+    for rank, m in enumerate(sorted_models, 1):
+        mean = m["metrics_mean"]
+        std = m["metrics_std"]
+        n = m["n_seeds"]
+        phase = m.get("phase", "")
+        w = (phase_c_report["window_size"]
+             if phase == "phase_c"
+             else cumul_report["window_size"])
+        r20 = _fmt(mean["recall_at_20"], std["recall_at_20"], n)
+        h20 = _fmt(mean["hit_at_20"], std["hit_at_20"], n)
+        mrr = _fmt(mean["mrr"], std["mrr"], n)
+        t = m.get("training_time_s", 0)
+        lines.append(
+            f"| {rank} | {m['name']} | {phase} | {w} | {r20} | {h20} "
+            f"| {mrr} | {n} | {t:.1f} |"
+        )
+
+    lines.append("")
+    lines.append(
+        f"> **Note:** Phase A/B models evaluated at "
+        f"W={cumul_report['window_size']} "
+        f"(test_n={cumul_report['test_split_size']}). "
+        f"Phase C spiking_transformer evaluated at "
+        f"W={phase_c_report['window_size']} "
+        f"(test_n={phase_c_report['test_split_size']})."
+    )
+    lines.append("")
+
+    # Phase A Analysis
+    lines.append("## Phase Analysis")
+    lines.append("")
+    lines.append("### Phase A: Feedforward SNNs (Sprint 4)")
+    lines.append("")
+    lines.append(
+        f"Two feedforward SNN architectures were evaluated at W="
+        f"{cumul_report['window_size']} "
+        "with direct encoding (T=1):"
+    )
+    lines.append("")
+
+    mlp_r20 = mlp["metrics_mean"]["recall_at_20"]
+    cnn_r20 = cnn["metrics_mean"]["recall_at_20"]
+    lines.append(
+        f"- **SpikingMLP:** Recall@20 = "
+        f"{_fmt(mlp_r20, mlp['metrics_std']['recall_at_20'], 3)}"
+    )
+    lines.append(
+        f"- **SpikingCNN1D:** Recall@20 = "
+        f"{_fmt(cnn_r20, cnn['metrics_std']['recall_at_20'], 3)}"
+    )
+    lines.append("")
+    lines.append(
+        "Both SNN models performed comparably to the GRU baseline, with "
+        "SpikingCNN1D slightly ahead. Direct encoding (T=1) reduces SNNs "
+        "to single-timestep feedforward networks, limiting their temporal "
+        "dynamics."
+    )
+    lines.append("")
+
+    # Phase B Analysis
+    lines.append("### Phase B: Recurrent SNN (Sprint 5)")
+    lines.append("")
+    sgru_r20 = sgru["metrics_mean"]["recall_at_20"]
+    lines.append(
+        "A 36-config hyperparameter sweep over the Spike-GRU architecture "
+        f"(hidden_size, num_layers, beta, encoding) at "
+        f"W={cumul_report['window_size']}:"
+    )
+    lines.append("")
+    lines.append(
+        "- **Best config:** h=256, l=1, beta=0.80, encoding=direct"
+    )
+    lines.append(
+        f"- **Test Recall@20:** "
+        f"{_fmt(sgru_r20, sgru['metrics_std']['recall_at_20'], 3)}"
+    )
+    gru_r20_val = gru["metrics_mean"]["recall_at_20"]
+    sgru_delta = sgru_r20 - gru_r20_val
+    sgru_pct = sgru_delta / gru_r20_val * 100 if gru_r20_val else 0
+    lines.append(
+        f"- **vs GRU baseline:** "
+        f"{sgru_delta:+.4f} ({sgru_pct:+.2f}%)"
+    )
+    lines.append("")
+    lines.append(
+        "Key finding: direct and rate_coded encoding produce identical "
+        "results for Spike-GRU. Hidden size is the dominant hyperparameter "
+        "(256 >> 128 >> 64)."
+    )
+    lines.append("")
+
+    # Phase C Analysis
+    lines.append("### Phase C: Spiking Transformer (Sprint 6)")
+    lines.append("")
+    trans_r20 = trans["metrics_mean"]["recall_at_20"]
+    lines.append(
+        "The SpikingTransformer (Spikformer-style spike-form "
+        "self-attention) underwent window size tuning and a 72-config "
+        f"HP sweep at optimal W={phase_c_report['window_size']}:"
+    )
+    lines.append("")
+    lines.append(
+        "- **Window tuning:** W=90 is optimal (+0.79% vs W=21). "
+        "Only W=90 trains beyond epoch 1."
+    )
+    lines.append(
+        "- **Best config:** d_model=64, n_heads=2, n_layers=6, "
+        "beta=0.95, rate_coded"
+    )
+    lines.append(
+        f"- **Test Recall@20:** "
+        f"{_fmt(trans_r20, trans['metrics_std']['recall_at_20'], 3)}"
+    )
+    lines.append("")
+    lines.append(
+        "Key finding: rate_coded encoding definitively outperforms direct "
+        "for the SpikingTransformer at W=90 (all top-5 configs use "
+        "rate_coded). Depth matters more than width (d=64 with 6 layers "
+        "beats d=128 with 2 layers)."
+    )
+    lines.append("")
+
+    # Cross-Cutting Analysis
+    lines.append("## Cross-Cutting Analysis")
+    lines.append("")
+
+    # Window Size Impact
+    lines.append("### Window Size Impact")
+    lines.append("")
+    lines.append(
+        "Window size tuning (STORY-6.2) revealed that longer context "
+        "significantly benefits the SpikingTransformer:"
+    )
+    lines.append("")
+    lines.append("| Window | val_R@20 | Best Epoch | Training Time |")
+    lines.append("|--------|----------|------------|---------------|")
+    lines.append("| W=7-60 | ~0.507   | 1 (plateau)| 32-101s      |")
+    lines.append("| W=90   | 0.5144   | 20         | 432s          |")
+    lines.append("")
+    lines.append(
+        "W=90 is the only window size where the transformer trains "
+        "beyond epoch 1, suggesting it needs ~90 days of history to learn "
+        "meaningful temporal patterns."
+    )
+    lines.append("")
+
+    # Encoding Analysis
+    lines.append("### Encoding Analysis")
+    lines.append("")
+    lines.append("| Phase | Model | Encoding Finding |")
+    lines.append("|-------|-------|------------------|")
+    lines.append(
+        "| Phase A | SpikingMLP, SpikingCNN1D | "
+        "Direct only (T=1, no temporal dynamics) |"
+    )
+    lines.append(
+        "| Phase B | Spike-GRU | "
+        "Direct == rate_coded (no benefit from T>1) |"
+    )
+    lines.append(
+        "| Phase C | SpikingTransformer (W=90) | "
+        "Rate_coded >> direct (all top-5 use rate_coded) |"
+    )
+    lines.append("")
+    lines.append(
+        "Rate-coded encoding only provides benefit when combined with "
+        "sufficient window context (W=90) and an attention-based "
+        "architecture. For recurrent and feedforward SNNs at W=21, "
+        "encoding strategy makes no difference."
+    )
+    lines.append("")
+
+    # Efficiency Comparison
+    lines.append("### Efficiency Comparison")
+    lines.append("")
+    lines.append("| Model | Training Time (s) | Environment |")
+    lines.append("|-------|-------------------|-------------|")
+    for m in sorted_models:
+        t = m.get("training_time_s", 0)
+        env = m.get("environment", "local")
+        lines.append(f"| {m['name']} | {t:.1f} | {env} |")
+    lines.append("")
+    lines.append(
+        "The SpikingTransformer requires significantly more compute "
+        "than other models due to the larger window (W=90) and rate-coded "
+        "encoding (10 timesteps). Feedforward SNNs offer the best "
+        "performance-per-compute ratio."
+    )
+    lines.append("")
+
+    # Key Findings & Conclusions
+    lines.append("## Key Findings & Conclusions")
+    lines.append("")
+
+    spread = (sorted_models[0]["metrics_mean"]["recall_at_20"]
+              - sorted_models[-1]["metrics_mean"]["recall_at_20"])
+    lines.append(
+        f"1. **Narrow performance band:** All 6 models cluster within "
+        f"{spread:.4f} Recall@20 of each other (~0.51-0.52). No "
+        "architecture achieves a breakthrough improvement."
+    )
+    lines.append(
+        "2. **FrequencyBaseline is hard to beat:** The simple "
+        "frequency/recency heuristic remains the top performer, "
+        "suggesting that CA5 event patterns are dominated by "
+        "frequency statistics rather than complex temporal dependencies."
+    )
+    lines.append(
+        f"3. **SpikingTransformer is best learned model:** "
+        f"Recall@20 = {trans_r20:.4f} at W=90, narrowing the gap to "
+        f"the FrequencyBaseline to {freq_r20 - trans_r20:.4f}."
+    )
+    lines.append(
+        "4. **Window size matters more than architecture:** The biggest "
+        "lever was increasing the context window from 21 to 90 days, "
+        "not changing the model architecture."
+    )
+    lines.append(
+        "5. **Encoding strategy is context-dependent:** Rate-coded "
+        "encoding only helps with sufficient window context (W=90) "
+        "and attention-based architectures."
+    )
+    lines.append(
+        "6. **High seed stability:** Most models show very low variance "
+        "across seeds (std < 0.003), indicating robust training dynamics."
+    )
+    lines.append("")
+
+    # Recommendations
+    lines.append("## Recommendations for Future Work")
+    lines.append("")
+    lines.append(
+        "1. **Window size tuning for all models:** Re-evaluate Phase A/B "
+        "models at W=90 to determine if longer context benefits them too."
+    )
+    lines.append(
+        "2. **Feature engineering:** Add calendar features "
+        "(day-of-week, month) and explore whether external signals "
+        "improve prediction."
+    )
+    lines.append(
+        "3. **Loss function exploration:** Try focal loss or "
+        "weighted BCE to address class imbalance among the 39 parts."
+    )
+    lines.append(
+        "4. **Ensemble methods:** Combine the FrequencyBaseline with "
+        "learned model predictions for potential complementary gains."
+    )
+    lines.append(
+        "5. **Longer windows:** Test W > 90 (e.g., 120, 180) to see "
+        "if the transformer continues to benefit from more context."
+    )
+    lines.append("")
+
+    # Write file
+    output_dir = Path(report_path).parent
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with open(report_path, "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+
 @cli.command("phase-b-sweep")
 @click.option(
     "--output",

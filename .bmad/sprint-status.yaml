@@ -219,15 +219,17 @@ sprints:
     end_date: "2026-03-30"
     capacity_points: 20
     committed_points: 6
-    completed_points: 0
-    status: "not_started"
+    completed_points: 3
+    status: "in_progress"
     goal: "Final report and project closure"
     stories:
       - story_id: "STORY-6.4"
         title: "Final Comprehensive Comparison"
         points: 3
-        status: "not_started"
-        assigned_to: null
+        status: "completed"
+        assigned_to: "ai_dev_agent"
+        completion_date: "2026-02-12"
+        story_doc: "docs/stories/STORY-6.4.md"
       - story_id: "STORY-6.5"
         title: "Reproducible Runbook & Closure"
         points: 3

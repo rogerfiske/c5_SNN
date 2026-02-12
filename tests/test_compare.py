@@ -1265,3 +1265,80 @@ class TestPhaseCSweepCLI:
              "--seeds", "abc,def"],
         )
         assert result.exit_code != 0
+
+
+class TestFinalReportCLI:
+    """Tests for the final-report CLI command."""
+
+    def test_command_exists(self):
+        """final-report command exists and shows help."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["final-report", "--help"])
+        assert result.exit_code == 0
+        assert "final comprehensive comparison" in result.output.lower()
+
+    def test_output_option(self):
+        """final-report --help shows --output option with default."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["final-report", "--help"])
+        assert "--output" in result.output
+        assert "final_comparison.json" in result.output
+
+    def test_report_option(self):
+        """final-report --help shows --report option with default."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["final-report", "--help"])
+        assert "--report" in result.output
+        assert "final_report.md" in result.output
+
+    def test_cumulative_option(self):
+        """final-report --help shows --cumulative option with default."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["final-report", "--help"])
+        assert "--cumulative" in result.output
+        assert "cumulative_comparison.json" in result.output
+
+    def test_phase_c_top_option(self):
+        """final-report --help shows --phase-c-top option with default."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["final-report", "--help"])
+        assert "--phase-c-top" in result.output
+        assert "phase_c_top5.json" in result.output
+
+    def test_missing_cumulative_file(self):
+        """final-report with nonexistent cumulative file exits non-zero."""
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["final-report",
+             "--cumulative", "nonexistent.json",
+             "--phase-c-top", "nonexistent2.json"],
+        )
+        assert result.exit_code != 0
+
+    def test_missing_phase_c_file(self, tmp_path):
+        """final-report with nonexistent phase-c file exits non-zero."""
+        import json
+
+        # Create a valid cumulative file
+        cumul = {
+            "models": [{"name": "test", "type": "learned", "phase": "base",
+                         "metrics_mean": {"recall_at_20": 0.5},
+                         "metrics_std": {"recall_at_20": 0.0},
+                         "n_seeds": 1, "training_time_s": 0,
+                         "environment": "local"}],
+            "generated_at": "2026-01-01T00:00:00Z",
+            "window_size": 21, "test_split_size": 100,
+        }
+        cumul_path = tmp_path / "cumul.json"
+        with open(cumul_path, "w") as f:
+            json.dump(cumul, f)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["final-report",
+             "--cumulative", str(cumul_path),
+             "--phase-c-top", "nonexistent.json"],
+        )
+        assert result.exit_code != 0

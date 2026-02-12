@@ -58,7 +58,7 @@
 - **Models:** FrequencyBaseline (heuristic, no params), GRUBaseline (learned, GRU + linear head)
 - **Trainer:** Generic training loop; early stopping, checkpoint saving, metrics CSV, config snapshot, pip freeze
 - **Comparison:** `build_comparison()` aggregates multi-seed results with mean/std; `format_comparison_table()` for display
-- **CLI commands:** validate-data, train, evaluate, compare, phase-a, phase-b-sweep, phase-b, window-tune, phase-c-sweep
+- **CLI commands:** validate-data, train, evaluate, compare, phase-a, phase-b-sweep, phase-b, window-tune, phase-c-sweep, final-report
 - **SNN models (Phase A):** SpikingMLP (FC+LIF), SpikingCNN1D (Conv1d+LIF) — both use SpikeEncoder, surrogate gradients
 - **SNN models (Phase B):** SpikeGRU (RLeaky recurrent LIF) — processes window event-by-event with accumulating membrane state
 - **SNN models (Phase C):** SpikingTransformer (SSA + spiking FFN with LIF) — Spikformer-style spike-form Q/K/V attention without softmax, learnable positional encoding, 286,887 params (default config)
@@ -224,15 +224,36 @@
 - Best encoding for binary data with SpikingTransformer: **rate_coded** (at W=90 with sufficient timesteps)
 - Optimal SpikingTransformer architecture: d=64, h=2, l=6, beta=0.95, rate_coded
 
+## Final Conclusions (STORY-6.4)
+
+**Final leaderboard (6 models, sorted by Recall@20):**
+
+| Rank | Model | Phase | W | Recall@20 | Seeds |
+|------|-------|-------|---|-----------|-------|
+| 1 | frequency_baseline | baseline | 21 | 0.5232 | 1 |
+| 2 | spiking_transformer | phase_c | 90 | 0.5178 +/- 0.001 | 3 |
+| 3 | spiking_cnn1d | phase_a | 21 | 0.5152 +/- 0.002 | 3 |
+| 4 | spike_gru | phase_b | 21 | 0.5137 | 3 |
+| 5 | spiking_mlp | phase_a | 21 | 0.5125 +/- 0.003 | 3 |
+| 6 | gru_baseline | baseline | 21 | 0.5099 +/- 0.003 | 3 |
+
+**Key conclusions:**
+1. All 6 models cluster within 0.0133 Recall@20 (~0.51-0.52). No architecture achieves a breakthrough.
+2. FrequencyBaseline remains the top performer — CA5 patterns are dominated by frequency statistics.
+3. SpikingTransformer is the best learned model (R@20=0.5178), narrowing the gap to FrequencyBaseline to 0.0054.
+4. Window size matters more than architecture (W=90 vs W=21 was the biggest lever).
+5. Rate-coded encoding only helps with sufficient context (W=90) + attention architecture.
+6. All models show high seed stability (std < 0.003).
+
+**Output files:** `results/final_comparison.json`, `results/final_report.md`
+
 ## Test Coverage
 
-- **Total tests:** 484 (all passing)
+- **Total tests:** 491 (all passing)
 - **Test files:** test_validation, test_loader, test_logging_setup, test_seed, test_config, test_windowing, test_splits, test_baselines, test_metrics, test_evaluate_cli, test_train, test_compare, test_snn_models
 
 ## Next Actions
 
-- Sprint 6 complete (18/18 points). Sprint 7 is next (6 points, 2 stories).
-- STORY-6.4: Final Comprehensive Comparison — combine Phase A + B + C results into unified leaderboard.
+- Sprint 7 in progress. STORY-6.4 complete.
 - STORY-6.5: Reproducible Runbook & Closure — project documentation and closure.
-- All learned models cluster ~0.51 Recall@20 — dataset temporal structure may be inherently simple.
-- Best SpikingTransformer (d=64, h=2, l=6, beta=0.95, rate_coded, W=90): test_R@20=0.5178.
+- After STORY-6.5, project is complete (103/103 points across 7 sprints).
