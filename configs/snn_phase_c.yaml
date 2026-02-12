@@ -1,22 +1,24 @@
-# SNN Phase C — Spiking Transformer experiment config (STORY-6.1)
+# SNN Phase C — Spiking Transformer best config (STORY-6.3 HP sweep)
+# Best model: d=64, h=2, l=6, beta=0.95, rate_coded, W=90
+# Test Recall@20 = 0.5178 +/- 0.001 (3 seeds on RunPod B200)
 experiment:
   name: "snn_phase_c_spiking_transformer"
   seed: 42
 
 data:
   raw_path: "data/raw/CA5_matrix_binary.csv"
-  window_size: 21
+  window_size: 90
   split_ratios: [0.70, 0.15, 0.15]
   batch_size: 64
 
 model:
   type: "spiking_transformer"
-  encoding: "direct"
+  encoding: "rate_coded"
   timesteps: 10
-  d_model: 128
-  n_heads: 4
-  n_layers: 2
-  d_ffn: 256
+  d_model: 64
+  n_heads: 2
+  n_layers: 6
+  d_ffn: 128
   beta: 0.95
   dropout: 0.1
   max_window_size: 100

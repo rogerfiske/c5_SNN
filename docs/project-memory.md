@@ -19,6 +19,8 @@
 | Sprint 4 | 18/18 | 18 | Complete (2026-02-11) |
 | Sprint 5 | 13/13 | 13 | Complete (2026-02-11) |
 | Sprint 6 | 18/18 | 18 | Complete (2026-02-12) |
+| Sprint 7 | 6/6 | 6 | Complete (2026-02-12) |
+| **Total** | **103/103** | **avg 14.7** | **PROJECT COMPLETE** |
 
 ## Decisions
 
@@ -252,8 +254,41 @@
 - **Total tests:** 491 (all passing)
 - **Test files:** test_validation, test_loader, test_logging_setup, test_seed, test_config, test_windowing, test_splits, test_baselines, test_metrics, test_evaluate_cli, test_train, test_compare, test_snn_models
 
-## Next Actions
+## Project Closure (STORY-6.5)
 
-- Sprint 7 in progress. STORY-6.4 complete.
-- STORY-6.5: Reproducible Runbook & Closure — project documentation and closure.
-- After STORY-6.5, project is complete (103/103 points across 7 sprints).
+**Status:** Complete — 103/103 points across 22 stories in 7 sprints.
+
+**Velocity summary:**
+
+| Sprint | Points | Velocity |
+|--------|--------|----------|
+| Sprint 1 | 13/13 | 13 |
+| Sprint 2 | 16/16 | 16 |
+| Sprint 3 | 19/19 | 19 |
+| Sprint 4 | 18/18 | 18 |
+| Sprint 5 | 13/13 | 13 |
+| Sprint 6 | 18/18 | 18 |
+| Sprint 7 | 6/6 | 6 |
+| **Total** | **103/103** | **avg 14.7/sprint** |
+
+**Final deliverables:**
+- 6 trained model architectures with reproducible configs
+- `results/final_comparison.json` — machine-readable 6-model leaderboard
+- `results/final_report.md` — publishable analysis report
+- 491 passing tests, ruff clean, CI green
+- Comprehensive README with full reproduction sequence
+- All configs verified in `configs/` directory
+
+**What worked well:**
+- BMAD Method v6 provided clear structure for AI-driven development
+- Config-driven experiments enabled full reproducibility
+- Time-based splits with no shuffling prevented data leakage
+- HP sweep (72 configs on RunPod B200) was efficient and stable
+- Seed stability across all models (std < 0.003) validates methodology
+
+**What could be explored next (future work):**
+- Calendar features (day-of-week seasonality) — still an open question
+- Class imbalance handling (loss weighting, focal loss) — still an open question
+- Larger window sizes (W>90) with more efficient architectures
+- Ensemble methods combining frequency baseline with learned models
+- Alternative spike encodings (latency-coded, population-coded)

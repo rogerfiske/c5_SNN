@@ -1622,10 +1622,10 @@ class TestSpikingTransformerConfigFile:
 
         model = get_model(config)
         assert isinstance(model, SpikingTransformer)
-        assert model.d_model == 128
-        assert model.n_heads == 4
-        assert model.n_layers == 2
-        assert model.d_ffn == 256
+        assert model.d_model == 64
+        assert model.n_heads == 2
+        assert model.n_layers == 6
+        assert model.d_ffn == 128
 
     def test_config_forward_shape(self):
         """Model from config produces correct output shape."""
@@ -1635,7 +1635,7 @@ class TestSpikingTransformerConfigFile:
             config = yaml.safe_load(f)
 
         model = get_model(config)
-        x = _binary_input(batch=4, window=21)
+        x = _binary_input(batch=4, window=90)
         out = model(x)
         assert out.shape == (4, 39)
 

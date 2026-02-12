@@ -219,8 +219,8 @@ sprints:
     end_date: "2026-03-30"
     capacity_points: 20
     committed_points: 6
-    completed_points: 3
-    status: "in_progress"
+    completed_points: 6
+    status: "completed"
     goal: "Final report and project closure"
     stories:
       - story_id: "STORY-6.4"
@@ -233,8 +233,10 @@ sprints:
       - story_id: "STORY-6.5"
         title: "Reproducible Runbook & Closure"
         points: 3
-        status: "not_started"
-        assigned_to: null
+        status: "completed"
+        assigned_to: "ai_dev_agent"
+        completion_date: "2026-02-12"
+        story_doc: "docs/stories/STORY-6.5.md"
 
 velocity:
   sprint_1: 13
@@ -243,8 +245,8 @@ velocity:
   sprint_4: 18
   sprint_5: 13
   sprint_6: 18
-  sprint_7: null
-  rolling_average: null
+  sprint_7: 6
+  rolling_average: 14.7
 
 team:
   size: 1
