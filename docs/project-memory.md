@@ -18,6 +18,7 @@
 | Sprint 3 | 19/19 | 19 | Complete (2026-02-11) |
 | Sprint 4 | 18/18 | 18 | Complete (2026-02-11) |
 | Sprint 5 | 13/13 | 13 | Complete (2026-02-11) |
+| Sprint 6 | 18/18 | 18 | Complete (2026-02-12) |
 
 ## Decisions
 
@@ -57,7 +58,7 @@
 - **Models:** FrequencyBaseline (heuristic, no params), GRUBaseline (learned, GRU + linear head)
 - **Trainer:** Generic training loop; early stopping, checkpoint saving, metrics CSV, config snapshot, pip freeze
 - **Comparison:** `build_comparison()` aggregates multi-seed results with mean/std; `format_comparison_table()` for display
-- **CLI commands:** validate-data, train, evaluate, compare, phase-a, phase-b-sweep, phase-b, window-tune
+- **CLI commands:** validate-data, train, evaluate, compare, phase-a, phase-b-sweep, phase-b, window-tune, phase-c-sweep
 - **SNN models (Phase A):** SpikingMLP (FC+LIF), SpikingCNN1D (Conv1d+LIF) — both use SpikeEncoder, surrogate gradients
 - **SNN models (Phase B):** SpikeGRU (RLeaky recurrent LIF) — processes window event-by-event with accumulating membrane state
 - **SNN models (Phase C):** SpikingTransformer (SSA + spiking FFN with LIF) — Spikformer-style spike-form Q/K/V attention without softmax, learnable positional encoding, 286,887 params (default config)
@@ -72,8 +73,8 @@
 
 ## Open Questions
 
-- Optimal history window W (start 21; tune 7-90).
-- Best encoding for binary: direct spike vs rate-coded vs latency-coded.
+- ~~Optimal history window W (start 21; tune 7-90).~~ **RESOLVED:** W=90 (STORY-6.2)
+- ~~Best encoding for binary: direct spike vs rate-coded vs latency-coded.~~ **RESOLVED:** rate_coded for SpikingTransformer at W=90 (STORY-6.3)
 - Whether to add calendar features (day-of-week seasonality) and how much they help.
 - How to handle class imbalance and rare parts (loss weighting vs focal).
 
@@ -182,14 +183,56 @@
 
 **Resolved open question:** Optimal W = 90 (was 21 default). Longer context helps the SpikingTransformer.
 
+## Phase C Results (Spiking Transformer HP Sweep — STORY-6.3)
+
+**Run date:** 2026-02-12 | **GPU:** NVIDIA B200 | **Seeds:** 42, 123, 7 | **Window:** 90 | **Test samples:** 1,743
+
+**HP Sweep:** 72 configs = n_layers [2,4,6] × n_heads [2,4] × d_model [64,128] × beta [0.5,0.8,0.95] × encoding [direct,rate_coded]
+
+**Phase 1 Top-5 Screening (by val_recall_at_20):**
+
+| Rank | d_model | heads | layers | beta | encoding | val_R@20 |
+|------|---------|-------|--------|------|----------|----------|
+| 1 | 128 | 2 | 2 | 0.95 | rate_coded | 0.5190 |
+| 2 | 128 | 4 | 2 | 0.95 | rate_coded | 0.5189 |
+| 3 | 128 | 4 | 4 | 0.80 | rate_coded | 0.5177 |
+| 4 | 64 | 2 | 6 | 0.95 | rate_coded | 0.5177 |
+| 5 | 64 | 4 | 6 | 0.80 | rate_coded | 0.5176 |
+
+**Phase 2 Test Results (top-5, 3 seeds each):**
+
+| Model | Phase | Recall@20 | Hit@20 | MRR | Time (s) |
+|-------|-------|-----------|--------|-----|----------|
+| spiking_transformer_top1 | phase_c | 0.5147 +/- 0.000 | 0.9788 +/- 0.000 | 0.3166 +/- 0.000 | 1190.2 |
+| spiking_transformer_top2 | phase_c | 0.5147 +/- 0.000 | 0.9788 +/- 0.000 | 0.3168 +/- 0.000 | 828.2 |
+| spiking_transformer_top3 | phase_c | 0.5167 +/- 0.001 | 0.9813 +/- 0.002 | 0.3138 +/- 0.001 | 2217.1 |
+| spiking_transformer_top4 | phase_c | **0.5178 +/- 0.001** | 0.9803 +/- 0.002 | 0.3128 +/- 0.000 | 2800.4 |
+| spiking_transformer_top5 | phase_c | 0.5167 +/- 0.002 | 0.9807 +/- 0.002 | 0.3145 +/- 0.001 | 2512.4 |
+
+**Best model:** Top-4 config (d=64, h=2, l=6, beta=0.95, rate_coded) — test_R@20 = **0.5178 +/- 0.001**
+
+**Key findings:**
+1. **All top-5 configs use rate_coded encoding** — rate_coded definitively outperforms direct for SpikingTransformer at W=90
+2. **Beta=0.95 dominant** (3 of top 5) — high membrane decay preserves information longer in LIF neurons
+3. **Performance spread narrow:** val_R@20 ranges 0.5045-0.5190 across all 72 configs (only 2.8% spread)
+4. **Best test R@20=0.5178** — slightly below FrequencyBaseline (0.5232) but best among learned models
+5. **d=64 with 6 layers beats d=128 with 2 layers on test set** — depth > width for this task
+6. **Extremely stable across seeds:** Top 1-2 have std=0.000 for R@20 (perfect reproducibility)
+7. **Total sweep time:** 10.3 hours on B200 (Phase 1: 7.6h, Phase 2: 2.7h)
+
+**Resolved open questions:**
+- Best encoding for binary data with SpikingTransformer: **rate_coded** (at W=90 with sufficient timesteps)
+- Optimal SpikingTransformer architecture: d=64, h=2, l=6, beta=0.95, rate_coded
+
 ## Test Coverage
 
-- **Total tests:** 475 (all passing)
+- **Total tests:** 484 (all passing)
 - **Test files:** test_validation, test_loader, test_logging_setup, test_seed, test_config, test_windowing, test_splits, test_baselines, test_metrics, test_evaluate_cli, test_train, test_compare, test_snn_models
 
 ## Next Actions
 
-- Sprint 6 in progress: STORY-6.1, STORY-6.2 complete, next is HP sweep (STORY-6.3).
-- STORY-6.3 HP sweep should use W=90 as base window size.
-- SpikingTransformer at W=90 shows promising multi-epoch training (unlike W=7-60 which plateau immediately).
-- Consider that all learned models cluster ~0.51 Recall@20 — dataset temporal structure may be inherently simple.
+- Sprint 6 complete (18/18 points). Sprint 7 is next (6 points, 2 stories).
+- STORY-6.4: Final Comprehensive Comparison — combine Phase A + B + C results into unified leaderboard.
+- STORY-6.5: Reproducible Runbook & Closure — project documentation and closure.
+- All learned models cluster ~0.51 Recall@20 — dataset temporal structure may be inherently simple.
+- Best SpikingTransformer (d=64, h=2, l=6, beta=0.95, rate_coded, W=90): test_R@20=0.5178.

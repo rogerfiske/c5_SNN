@@ -3,8 +3,9 @@
 **Epic:** Epic 6 — SNN Phase C & Final Report
 **Priority:** Must Have
 **Story Points:** 5
-**Status:** Not Started
-**Assigned To:** Unassigned
+**Status:** Completed
+**Assigned To:** ai_dev_agent
+**Completion Date:** 2026-02-12
 **Created:** 2026-02-11
 **Sprint:** 6
 
@@ -69,22 +70,22 @@ The sweep follows the proven two-phase approach from STORY-5.2 (Phase B): (1) br
 
 ## Acceptance Criteria
 
-- [ ] New CLI command `c5_snn phase-c-sweep` exists and runs end-to-end
-- [ ] Command accepts `--config` (required), `--output` (default `"results/phase_c_sweep.csv"`), `--top-k` (default `5`), `--seeds` (default `"42,123,7"`), and `--screening-seed` (default `42`) options
-- [ ] Sweep grid covers: n_layers [2, 4, 6] × n_heads [2, 4] × d_model [64, 128] × beta [0.5, 0.8, 0.95] × encoding [direct, rate_coded] = 72 configs
-- [ ] `d_ffn` automatically set to `2 × d_model` for each config
-- [ ] Window size W=90 used for all runs (from STORY-6.2 optimal result)
-- [ ] Phase 1 (screening): All 72 configs trained with seed=42, evaluated on validation set
-- [ ] `results/phase_c_sweep.csv` contains all 72 rows with columns: config_id, d_model, n_heads, n_layers, d_ffn, beta, encoding, timesteps, val_recall_at_20, val_hit_at_20, val_mrr, training_time_s, best_epoch
-- [ ] Console prints numbered progress during sweep: `[N/72] ...`
-- [ ] After Phase 1, console prints sorted leaderboard of all 72 configs by val_recall_at_20
-- [ ] Phase 2 (top-K re-run): Top-5 configs re-run with 3 seeds each, evaluated on **test** set
-- [ ] `results/phase_c_top5.json` contains top-5 models in comparison report format (metrics_mean, metrics_std, n_seeds)
-- [ ] Best overall checkpoint (highest mean test recall_at_20 across seeds) saved to `results/phase_c_best/` with config_snapshot.yaml
-- [ ] `set_global_seed()` called before each training run
-- [ ] Data pipeline rebuilt at W=90 (windows, splits, dataloaders)
-- [ ] Unit tests for `phase-c-sweep` CLI command (command exists, help text, all options)
-- [ ] `ruff check` passes and `pytest` all green
+- [x] New CLI command `c5_snn phase-c-sweep` exists and runs end-to-end
+- [x] Command accepts `--config` (required), `--output` (default `"results/phase_c_sweep.csv"`), `--top-k` (default `5`), `--seeds` (default `"42,123,7"`), and `--screening-seed` (default `42`) options
+- [x] Sweep grid covers: n_layers [2, 4, 6] × n_heads [2, 4] × d_model [64, 128] × beta [0.5, 0.8, 0.95] × encoding [direct, rate_coded] = 72 configs
+- [x] `d_ffn` automatically set to `2 × d_model` for each config
+- [x] Window size W=90 used for all runs (from STORY-6.2 optimal result)
+- [x] Phase 1 (screening): All 72 configs trained with seed=42, evaluated on validation set
+- [x] `results/phase_c_sweep.csv` contains all 72 rows with columns: config_id, d_model, n_heads, n_layers, d_ffn, beta, encoding, timesteps, val_recall_at_20, val_hit_at_20, val_mrr, training_time_s, best_epoch
+- [x] Console prints numbered progress during sweep: `[N/72] ...`
+- [x] After Phase 1, console prints sorted leaderboard of all 72 configs by val_recall_at_20
+- [x] Phase 2 (top-K re-run): Top-5 configs re-run with 3 seeds each, evaluated on **test** set
+- [x] `results/phase_c_top5.json` contains top-5 models in comparison report format (metrics_mean, metrics_std, n_seeds)
+- [x] Best overall checkpoint (highest mean test recall_at_20 across seeds) saved to `results/phase_c_best/` with config_snapshot.yaml
+- [x] `set_global_seed()` called before each training run
+- [x] Data pipeline rebuilt at W=90 (windows, splits, dataloaders)
+- [x] Unit tests for `phase-c-sweep` CLI command (command exists, help text, all options)
+- [x] `ruff check` passes and `pytest` all green
 
 ---
 
@@ -272,19 +273,19 @@ Given the estimated sweep time, this story should use RunPod B200:
 
 ## Definition of Done
 
-- [ ] `phase-c-sweep` CLI command implemented in `src/c5_snn/cli.py`
-- [ ] Command runs 72-config sweep (Phase 1) + top-K multi-seed re-run (Phase 2)
-- [ ] `results/phase_c_sweep.csv` generated with all 72 configs and metrics
-- [ ] `results/phase_c_top5.json` generated with top-5 multi-seed results
-- [ ] Best checkpoint saved to `results/phase_c_best/`
-- [ ] Console prints progress, screening leaderboard, and top-K comparison table
-- [ ] Unit tests in `tests/test_compare.py`:
-  - [ ] `phase-c-sweep` command exists and has correct help text
-  - [ ] `--config`, `--output`, `--top-k`, `--seeds`, `--screening-seed` options work
-- [ ] `ruff check src/ tests/` passes with zero errors
-- [ ] `pytest tests/ -v` passes (all existing + new tests)
-- [ ] Acceptance criteria validated (all checked)
-- [ ] Code committed to `main` branch and pushed
+- [x] `phase-c-sweep` CLI command implemented in `src/c5_snn/cli.py`
+- [x] Command runs 72-config sweep (Phase 1) + top-K multi-seed re-run (Phase 2)
+- [x] `results/phase_c_sweep.csv` generated with all 72 configs and metrics
+- [x] `results/phase_c_top5.json` generated with top-5 multi-seed results
+- [x] Best checkpoint saved to `results/phase_c_best/`
+- [x] Console prints progress, screening leaderboard, and top-K comparison table
+- [x] Unit tests in `tests/test_compare.py`:
+  - [x] `phase-c-sweep` command exists and has correct help text
+  - [x] `--config`, `--output`, `--top-k`, `--seeds`, `--screening-seed` options work
+- [x] `ruff check src/ tests/` passes with zero errors
+- [x] `pytest tests/ -v` passes (all existing + new tests)
+- [x] Acceptance criteria validated (all checked)
+- [x] Code committed to `main` branch and pushed
 
 ---
 
@@ -314,8 +315,11 @@ Given the estimated sweep time, this story should use RunPod B200:
 
 **Status History:**
 - 2026-02-11: Created by Scrum Master (AI)
+- 2026-02-11: Implementation started (CLI command + tests)
+- 2026-02-12: Phase 1+2 sweep completed on RunPod B200 (10.3 hours total)
+- 2026-02-12: Results verified, all acceptance criteria validated, story completed
 
-**Actual Effort:** TBD (will be filled during/after implementation)
+**Actual Effort:** 5 points (matched estimate). Phase 1 screening: 7.6h, Phase 2 top-5: 2.7h. Total GPU time: 10.3h on NVIDIA B200.
 
 ---
 

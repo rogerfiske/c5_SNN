@@ -188,8 +188,8 @@ sprints:
     end_date: "2026-03-23"
     capacity_points: 20
     committed_points: 18
-    completed_points: 13
-    status: "in_progress"
+    completed_points: 18
+    status: "completed"
     goal: "Spiking Transformer with window tuning and HP sweep"
     stories:
       - story_id: "STORY-6.1"
@@ -209,8 +209,9 @@ sprints:
       - story_id: "STORY-6.3"
         title: "HP Sweep & Best Model"
         points: 5
-        status: "defined"
-        assigned_to: null
+        status: "completed"
+        assigned_to: "ai_dev_agent"
+        completion_date: "2026-02-12"
         story_doc: "docs/stories/STORY-6.3.md"
 
   - sprint_number: 7
@@ -239,7 +240,7 @@ velocity:
   sprint_3: 19
   sprint_4: 18
   sprint_5: 13
-  sprint_6: null
+  sprint_6: 18
   sprint_7: null
   rolling_average: null
 
