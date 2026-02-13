@@ -2614,3 +2614,348 @@ def evaluate(
     click.echo(f"  Samples evaluated:  {len(result['per_sample'])}")
     click.echo(f"  Results saved to:   {output_dir}")
     click.echo()
+
+
+# ---------------------------------------------------------------------------
+# predict — Top-K prediction for the next event
+# ---------------------------------------------------------------------------
+
+
+@cli.command("predict")
+@click.option(
+    "--checkpoint",
+    "checkpoint_path",
+    default=None,
+    help="Path to a learned-model checkpoint (.pt file).",
+)
+@click.option(
+    "--model-type",
+    default=None,
+    help="Model type for non-checkpoint models (e.g. frequency_baseline).",
+)
+@click.option(
+    "--data-path",
+    default="data/raw/CA5_matrix_binary.csv",
+    help="Path to the CA5 CSV dataset.",
+    show_default=True,
+)
+@click.option(
+    "--window-size",
+    default=21,
+    help="Window size (used only with --model-type).",
+    show_default=True,
+)
+@click.option(
+    "--top-k",
+    default=20,
+    help="Number of top predictions to display.",
+    show_default=True,
+)
+@click.option(
+    "--asof",
+    default=None,
+    help="Predict using data up to this date (YYYY-MM-DD). Default: all data.",
+)
+def predict(
+    checkpoint_path: str | None,
+    model_type: str | None,
+    data_path: str,
+    window_size: int,
+    top_k: int,
+    asof: str | None,
+) -> None:
+    """Predict Top-K most likely parts for the next event."""
+    import pandas as pd
+    import torch
+
+    from c5_snn.data.loader import load_csv
+    from c5_snn.inference import (
+        build_prediction_window,
+        calendar_enhanced_predict,
+        format_top_k_prediction,
+        load_model_from_checkpoint,
+    )
+    from c5_snn.models.base import get_model
+    from c5_snn.utils.device import get_device
+
+    setup_logging("INFO")
+
+    # --- Validate: exactly one model source ---
+    if checkpoint_path and model_type:
+        click.echo(
+            "ERROR: Provide --checkpoint or --model-type, not both.",
+            err=True,
+        )
+        sys.exit(1)
+    if not checkpoint_path and not model_type:
+        click.echo(
+            "ERROR: Provide --checkpoint or --model-type.", err=True
+        )
+        sys.exit(1)
+
+    # --- Load data ---
+    try:
+        df = load_csv(data_path)
+    except Exception as e:
+        click.echo(f"ERROR: Failed to load data: {e}", err=True)
+        sys.exit(1)
+
+    # --- Filter by --asof date if provided ---
+    if asof:
+        df["_date_parsed"] = pd.to_datetime(df["date"])
+        df = df[df["_date_parsed"] <= pd.to_datetime(asof)].copy()
+        df = df.drop(columns=["_date_parsed"])
+        if len(df) == 0:
+            click.echo(
+                f"ERROR: No data found on or before {asof}.", err=True
+            )
+            sys.exit(1)
+
+    # --- Calendar-enhanced strategy (special path) ---
+    if model_type == "calendar_enhanced":
+        logits = calendar_enhanced_predict(df)
+        predictions = format_top_k_prediction(logits, top_k)
+        last_date = df["date"].iloc[-1]
+        click.echo()
+        click.echo(f"Prediction for next event after {last_date}")
+        click.echo(
+            "Model: calendar_enhanced "
+            "(SplitExtra: deficit + DOW/Month/DOM/WOY calendar)"
+        )
+        click.echo(f"Data: {len(df):,} events up to {last_date}")
+        click.echo("=" * 50)
+        click.echo(f"  {'Rank':<6} {'Part':<8} {'Score':<12}")
+        click.echo(f"  {'----':<6} {'----':<8} {'-----':<12}")
+        for p in predictions:
+            click.echo(
+                f"  {p['rank']:<6} {p['part']:<8} {p['score']:<12.4f}"
+            )
+        click.echo()
+        return
+
+    # --- Load model ---
+    device = get_device()
+
+    if checkpoint_path:
+        ckpt_path = Path(checkpoint_path)
+        if not ckpt_path.exists():
+            click.echo(
+                f"ERROR: Checkpoint not found: {checkpoint_path}",
+                err=True,
+            )
+            sys.exit(1)
+        model, config = load_model_from_checkpoint(ckpt_path, device)
+        window_size = config.get("data", {}).get(
+            "window_size", window_size
+        )
+        model_label = config.get("model", {}).get("type", "unknown")
+        source_label = f"checkpoint: {checkpoint_path}"
+    else:
+        config = {
+            "model": {"type": model_type},
+            "data": {"window_size": window_size},
+        }
+        model = get_model(config)
+        model.to(device).eval()
+        model_label = model_type
+        source_label = f"model-type: {model_type}"
+
+    # --- Build prediction window ---
+    x = build_prediction_window(df, window_size)
+    x = x.to(device)
+
+    # --- Forward pass ---
+    with torch.no_grad():
+        logits = model(x)
+
+    predictions = format_top_k_prediction(logits, top_k)
+
+    # --- Display results ---
+    last_date = df["date"].iloc[-1]
+    first_window_date = df["date"].iloc[-window_size]
+
+    click.echo()
+    click.echo(f"Prediction for next event after {last_date}")
+    click.echo(f"Model: {model_label} ({source_label})")
+    click.echo(
+        f"Window: last {window_size} events "
+        f"[{first_window_date} to {last_date}]"
+    )
+    click.echo("=" * 50)
+    click.echo(f"  {'Rank':<6} {'Part':<8} {'Score':<12}")
+    click.echo(f"  {'----':<6} {'----':<8} {'-----':<12}")
+    for p in predictions:
+        click.echo(
+            f"  {p['rank']:<6} {p['part']:<8} {p['score']:<12.4f}"
+        )
+    click.echo()
+
+
+# ---------------------------------------------------------------------------
+# holdout-test — Strict holdout validation on most recent data
+# ---------------------------------------------------------------------------
+
+
+@cli.command("holdout-test")
+@click.option(
+    "--checkpoint",
+    "checkpoint_path",
+    default=None,
+    help="Path to a learned-model checkpoint (.pt file).",
+)
+@click.option(
+    "--model-type",
+    default=None,
+    help="Model type for non-checkpoint models (e.g. frequency_baseline).",
+)
+@click.option(
+    "--data-path",
+    default="data/raw/CA5_matrix_binary.csv",
+    help="Path to the CA5 CSV dataset.",
+    show_default=True,
+)
+@click.option(
+    "--window-size",
+    default=21,
+    help="Window size (used only with --model-type).",
+    show_default=True,
+)
+@click.option(
+    "--n-holdout",
+    default=1,
+    help="Number of most recent rows to use as blind holdout.",
+    show_default=True,
+)
+def holdout_test(
+    checkpoint_path: str | None,
+    model_type: str | None,
+    data_path: str,
+    window_size: int,
+    n_holdout: int,
+) -> None:
+    """Run strict holdout validation on the most recent data."""
+    from c5_snn.data.loader import load_csv
+    from c5_snn.inference import (
+        load_model_from_checkpoint,
+        run_calendar_holdout_test,
+        run_holdout_test,
+    )
+    from c5_snn.models.base import get_model
+    from c5_snn.utils.device import get_device
+
+    setup_logging("INFO")
+
+    # --- Validate: exactly one model source ---
+    if checkpoint_path and model_type:
+        click.echo(
+            "ERROR: Provide --checkpoint or --model-type, not both.",
+            err=True,
+        )
+        sys.exit(1)
+    if not checkpoint_path and not model_type:
+        click.echo(
+            "ERROR: Provide --checkpoint or --model-type.", err=True
+        )
+        sys.exit(1)
+
+    # --- Load data ---
+    try:
+        df = load_csv(data_path)
+    except Exception as e:
+        click.echo(f"ERROR: Failed to load data: {e}", err=True)
+        sys.exit(1)
+
+    # --- Calendar-enhanced strategy (special path) ---
+    if model_type == "calendar_enhanced":
+        try:
+            holdout_result = run_calendar_holdout_test(
+                df, window_size, n_holdout
+            )
+        except ValueError as e:
+            click.echo(f"ERROR: {e}", err=True)
+            sys.exit(1)
+        model_label = "calendar_enhanced"
+    else:
+        # --- Load model ---
+        device = get_device()
+
+        if checkpoint_path:
+            ckpt_path = Path(checkpoint_path)
+            if not ckpt_path.exists():
+                click.echo(
+                    f"ERROR: Checkpoint not found: {checkpoint_path}",
+                    err=True,
+                )
+                sys.exit(1)
+            model, config = load_model_from_checkpoint(ckpt_path, device)
+            window_size = config.get("data", {}).get(
+                "window_size", window_size
+            )
+            model_label = config.get("model", {}).get("type", "unknown")
+        else:
+            config = {
+                "model": {"type": model_type},
+                "data": {"window_size": window_size},
+            }
+            model = get_model(config)
+            model.to(device).eval()
+            model_label = model_type
+
+        # --- Run holdout test ---
+        try:
+            holdout_result = run_holdout_test(
+                model, df, window_size, n_holdout, device
+            )
+        except ValueError as e:
+            click.echo(f"ERROR: {e}", err=True)
+            sys.exit(1)
+
+    # --- Display aggregate metrics ---
+    metrics = holdout_result["metrics"]
+    samples = holdout_result["per_sample"]
+
+    first_date = samples[0]["date"]
+    last_date = samples[-1]["date"]
+
+    click.echo()
+    click.echo("Holdout Test Results")
+    click.echo(f"Model: {model_label}")
+    click.echo(
+        f"Holdout: last {n_holdout} events [{first_date} to {last_date}]"
+    )
+    click.echo(f"Window size: {window_size}")
+    click.echo("=" * 60)
+
+    click.echo()
+    click.echo("Aggregate Metrics:")
+    for key, value in metrics.items():
+        click.echo(f"  {key:<20} {value:.4f}")
+
+    # --- Per-sample breakdown ---
+    click.echo()
+    click.echo("Per-Sample Breakdown:")
+    click.echo(
+        f"  {'Date':<12} {'Actual Parts':<30} "
+        f"{'Hit@5':<7} {'Hit@20':<8} "
+        f"{'R@5':<7} {'R@20':<7} {'MRR':<7}"
+    )
+    click.echo("  " + "-" * 78)
+    for s in samples:
+        actual = ",".join(s["true_parts"])
+        hit5 = "Yes" if s["hit_at_5"] > 0.5 else "No"
+        hit20 = "Yes" if s["hit_at_20"] > 0.5 else "No"
+        click.echo(
+            f"  {s['date']:<12} {actual:<30} "
+            f"{hit5:<7} {hit20:<8} "
+            f"{s['recall_at_5']:<7.3f} {s['recall_at_20']:<7.3f} "
+            f"{s['mrr']:<7.4f}"
+        )
+
+    click.echo()
+    click.echo(
+        f"Summary: {n_holdout} holdout samples, "
+        f"Recall@20={metrics['recall_at_20']:.4f}, "
+        f"Hit@20={metrics['hit_at_20']:.4f}, "
+        f"MRR={metrics['mrr']:.4f}"
+    )
+    click.echo()
