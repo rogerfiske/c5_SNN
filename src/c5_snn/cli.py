@@ -2647,7 +2647,7 @@ def evaluate(
 )
 @click.option(
     "--top-k",
-    default=20,
+    default=24,
     help="Number of top predictions to display.",
     show_default=True,
 )
@@ -2957,5 +2957,218 @@ def holdout_test(
         f"Recall@20={metrics['recall_at_20']:.4f}, "
         f"Hit@20={metrics['hit_at_20']:.4f}, "
         f"MRR={metrics['mrr']:.4f}"
+    )
+    click.echo()
+
+
+# ---------------------------------------------------------------------------
+# lln-predict — LLN-Pattern exclusion-based prediction
+# ---------------------------------------------------------------------------
+
+
+@cli.command("lln-predict")
+@click.option(
+    "--data-path",
+    default="data/raw/CA5_date.csv",
+    help="Path to the CA5 date CSV (6 columns).",
+    show_default=True,
+)
+@click.option(
+    "--k-exclude",
+    default=20,
+    help="Number of values to exclude.",
+    show_default=True,
+)
+@click.option(
+    "--no-pattern",
+    is_flag=True,
+    help="Skip pattern refinement (LLN only).",
+)
+@click.option(
+    "--no-boundary",
+    is_flag=True,
+    help="Skip boundary penalty.",
+)
+@click.option(
+    "--boundary-penalty",
+    default=1.7,
+    help="Boundary penalty factor.",
+    show_default=True,
+)
+def lln_predict(
+    data_path: str,
+    k_exclude: int,
+    no_pattern: bool,
+    no_boundary: bool,
+    boundary_penalty: float,
+) -> None:
+    """Predict exclusion set for the next event using LLN-Pattern pipeline."""
+    from c5_snn.lln_pattern.loader import load_date_csv
+    from c5_snn.lln_pattern.pipeline import predict_exclusion_set
+
+    setup_logging("INFO")
+
+    try:
+        df = load_date_csv(data_path)
+    except Exception as e:
+        click.echo(f"ERROR: {e}", err=True)
+        sys.exit(1)
+
+    use_pattern = not no_pattern
+    use_boundary = not no_boundary
+
+    result = predict_exclusion_set(
+        df,
+        target_idx=len(df),
+        k_exclude=k_exclude,
+        use_pattern=use_pattern,
+        use_boundary=use_boundary,
+        boundary_penalty=boundary_penalty,
+    )
+
+    excluded = sorted(result["excluded_values"].tolist())
+    remaining = sorted(
+        v for v in range(1, 40) if v not in excluded
+    )
+
+    # Pipeline label
+    stages = ["LLN"]
+    if use_pattern:
+        stages.append("Pattern")
+    if use_boundary:
+        stages.append(f"Boundary(penalty={boundary_penalty})")
+    pipeline_label = " + ".join(stages)
+
+    last_date = df["date"].iloc[-1]
+
+    click.echo()
+    click.echo("LLN-Pattern Prediction")
+    click.echo("=" * 50)
+    click.echo(f"Data: {len(df):,} events up to {last_date}")
+    click.echo(f"Pipeline: {pipeline_label}")
+    click.echo()
+    click.echo(
+        f"Exclusion set ({k_exclude} values predicted NOT to appear):"
+    )
+    click.echo(f"  {excluded}")
+    click.echo()
+    click.echo(
+        f"Remaining {39 - k_exclude} values (predicted likely to appear):"
+    )
+    click.echo(f"  {remaining}")
+    click.echo()
+
+
+# ---------------------------------------------------------------------------
+# lln-holdout — LLN-Pattern holdout evaluation
+# ---------------------------------------------------------------------------
+
+
+@cli.command("lln-holdout")
+@click.option(
+    "--data-path",
+    default="data/raw/CA5_date.csv",
+    help="Path to the CA5 date CSV (6 columns).",
+    show_default=True,
+)
+@click.option(
+    "--n-holdout",
+    default=None,
+    type=int,
+    help="Number of holdout events. Default: 10%% of data.",
+)
+@click.option(
+    "--k-exclude",
+    default=20,
+    help="Number of values to exclude.",
+    show_default=True,
+)
+@click.option(
+    "--no-pattern",
+    is_flag=True,
+    help="Skip pattern refinement (LLN only).",
+)
+@click.option(
+    "--no-boundary",
+    is_flag=True,
+    help="Skip boundary penalty.",
+)
+@click.option(
+    "--boundary-penalty",
+    default=1.7,
+    help="Boundary penalty factor.",
+    show_default=True,
+)
+def lln_holdout(
+    data_path: str,
+    n_holdout: int | None,
+    k_exclude: int,
+    no_pattern: bool,
+    no_boundary: bool,
+    boundary_penalty: float,
+) -> None:
+    """Run strict holdout evaluation of the LLN-Pattern pipeline."""
+    from c5_snn.lln_pattern.holdout import run_lln_holdout_test
+    from c5_snn.lln_pattern.loader import load_date_csv
+
+    setup_logging("INFO")
+
+    try:
+        df = load_date_csv(data_path)
+    except Exception as e:
+        click.echo(f"ERROR: {e}", err=True)
+        sys.exit(1)
+
+    use_pattern = not no_pattern
+    use_boundary = not no_boundary
+
+    try:
+        result = run_lln_holdout_test(
+            df,
+            n_holdout=n_holdout,
+            k_exclude=k_exclude,
+            use_pattern=use_pattern,
+            use_boundary=use_boundary,
+            boundary_penalty=boundary_penalty,
+        )
+    except ValueError as e:
+        click.echo(f"ERROR: {e}", err=True)
+        sys.exit(1)
+
+    summary = result["summary"]
+    config = result["config"]
+
+    # Pipeline label
+    stages = ["LLN"]
+    if use_pattern:
+        stages.append("Pattern")
+    if use_boundary:
+        stages.append(f"Boundary(penalty={boundary_penalty})")
+    pipeline_label = " + ".join(stages)
+
+    click.echo()
+    click.echo("LLN-Pattern Holdout Test")
+    click.echo("=" * 50)
+    click.echo(
+        f"Data: {len(df):,} events, "
+        f"holdout: {config['n_holdout']:,} "
+        f"(last {config['n_holdout'] / len(df) * 100:.1f}%)"
+    )
+    click.echo(f"Pipeline: {pipeline_label}")
+    click.echo(f"Exclusion set size: {k_exclude}")
+    click.echo()
+    click.echo("Results:")
+    for n_wrong in sorted(summary["distribution"].keys()):
+        count = summary["distribution"][n_wrong]
+        pct = 100.0 * count / summary["total"]
+        click.echo(
+            f"  {n_wrong} wrong: {count:>6} / {summary['total']:,} "
+            f"({pct:5.2f}%)"
+        )
+    click.echo()
+    click.echo(f"  Mean wrong: {summary['mean_wrong']:.4f}")
+    click.echo(
+        f"  0 wrong: {summary['zero_wrong_count']} "
+        f"({summary['zero_wrong_pct']:.2f}%)"
     )
     click.echo()
